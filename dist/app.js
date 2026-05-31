@@ -1,0 +1,21 @@
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.app = void 0;
+const express_1 = __importDefault(require("express"));
+const cors_1 = __importDefault(require("cors"));
+const path_1 = __importDefault(require("path"));
+const env_1 = require("./config/env");
+const requestLogger_1 = require("./middleware/requestLogger");
+const errors_1 = require("./middleware/errors");
+const routes_1 = __importDefault(require("./routes"));
+exports.app = (0, express_1.default)();
+exports.app.use((0, cors_1.default)({ origin: env_1.env.frontendUrl }));
+exports.app.use(express_1.default.json({ limit: "2mb" }));
+exports.app.use(requestLogger_1.requestLogger);
+exports.app.use("/uploads", express_1.default.static(path_1.default.resolve("uploads")));
+exports.app.use("/api", routes_1.default);
+exports.app.use(errors_1.notFound);
+exports.app.use(errors_1.errorHandler);

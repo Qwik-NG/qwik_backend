@@ -1,0 +1,17 @@
+import { Router } from "express";
+import { z } from "zod";
+import { requireAuth } from "../../middleware/auth";
+import { prisma } from "../../lib/prisma";
+import { parseOrThrow } from "../../utils/validation";
+
+const router = Router();
+router.get("/me", requireAuth, async (req, res, next) => { try { res.json({ success: true, data: await prisma.user.findUnique({ where: { id: req.auth!.userId }, include: { profile: true } }) }); } catch (e) { next(e); } });
+router.patch("/me", requireAuth, async (req, res, next) => {
+  try {
+    const b = parseOrThrow(z.object({ fullName: z.string().min(2).optional(), phone: z.string().optional(), location: z.string().optional(), bio: z.string().optional(), avatarUrl: z.string().url().optional() }), req.body);
+    const user = await prisma.user.update({ where: { id: req.auth!.userId }, data: { fullName: b.fullName, phone: b.phone, location: b.location, profile: { upsert: { create: { bio: b.bio, avatarUrl: b.avatarUrl }, update: { bio: b.bio, avatarUrl: b.avatarUrl } } } }, include: { profile: true } });
+    res.json({ success: true, data: user });
+  } catch (e) { next(e); }
+});
+router.get("/me/saved", requireAuth, async (req, res, next) => { try { const s = await prisma.savedAd.findMany({ where: { userId: req.auth!.userId }, include: { ad: { include: { images: true, category: true } } }, orderBy: { createdAt: "desc" } }); res.json({ success: true, data: s.map((x) => x.ad) }); } catch (e) { next(e); } });
+export default router;
