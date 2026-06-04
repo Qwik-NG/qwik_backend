@@ -25,7 +25,7 @@ router.post("/login", async (req, res, next) => {
     const user = await prisma.user.findUnique({ where: { email: b.email.toLowerCase() } });
     if (!user || !(await bcrypt.compare(b.password, user.passwordHash))) return res.status(401).json({ success: false, message: "Invalid credentials" });
     const token = signAuthToken({ userId: user.id, email: user.email });
-    res.json({ success: true, data: { token, user: { id: user.id, email: user.email, fullName: user.fullName } } });
+    res.json({ success: true, data: { token, user: { id: user.id, email: user.email, fullName: user.fullName, role: user.role } } });
   } catch (e) { next(e); }
 });
 router.post("/forgot-password", async (req, res, next) => {
