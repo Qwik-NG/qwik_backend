@@ -14,6 +14,7 @@ router.get("/", async (req, res, next) => {
     const categoryId = String(req.query.categoryId ?? "").trim();
     const minPrice = req.query.minPrice ? Number(req.query.minPrice) : undefined;
     const maxPrice = req.query.maxPrice ? Number(req.query.maxPrice) : undefined;
+    const imagesLimit = req.query.imagesLimit ? Number(req.query.imagesLimit) : undefined;
     const where = {
       status: "ACTIVE" as const,
       ...(search
@@ -49,7 +50,16 @@ router.get("/", async (req, res, next) => {
         take: pageSize,
       }),
     ]);
-    res.json({ success: true, data: ads, meta: { page, pageSize, total } });
+    
+    // Limit images if requested to reduce payload size
+    const processedAds = imagesLimit 
+      ? ads.map(ad => ({
+          ...ad,
+          images: ad.images.slice(0, imagesLimit)
+        }))
+      : ads;
+    
+    res.json({ success: true, data: processedAds, meta: { page, pageSize, total } });
   } catch (e) {
     next(e);
   }
