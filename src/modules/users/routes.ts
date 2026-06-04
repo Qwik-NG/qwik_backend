@@ -13,5 +13,19 @@ router.patch("/me", requireAuth, async (req, res, next) => {
     res.json({ success: true, data: user });
   } catch (e) { next(e); }
 });
+router.get("/me/ads", requireAuth, async (req, res, next) => {
+  try {
+    const status = String(req.query.status ?? "").trim();
+    const ads = await prisma.ad.findMany({
+      where: {
+        userId: req.auth!.userId,
+        ...(status ? { status: status as any } : {}),
+      },
+      include: { images: true, category: true, user: true },
+      orderBy: { createdAt: "desc" },
+    });
+    res.json({ success: true, data: ads });
+  } catch (e) { next(e); }
+});
 router.get("/me/saved", requireAuth, async (req, res, next) => { try { const s = await prisma.savedAd.findMany({ where: { userId: req.auth!.userId }, include: { ad: { include: { images: true, category: true } } }, orderBy: { createdAt: "desc" } }); res.json({ success: true, data: s.map((x) => x.ad) }); } catch (e) { next(e); } });
 export default router;

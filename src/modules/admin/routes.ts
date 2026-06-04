@@ -126,7 +126,7 @@ router.get('/reports', async (req: Request, res: Response) => {
 // Update report status
 router.patch('/reports/:id', async (req: Request, res: Response) => {
   try {
-    const { id } = req.params;
+    const id = String(req.params.id);
     const { status } = req.body;
 
     if (!['PENDING', 'RESOLVED', 'DISMISSED'].includes(status)) {
@@ -147,7 +147,7 @@ router.patch('/reports/:id', async (req: Request, res: Response) => {
 // Delete ad (mod action)
 router.delete('/ads/:id', async (req: Request, res: Response) => {
   try {
-    const { id } = req.params;
+    const id = String(req.params.id);
 
     await prisma.ad.delete({
       where: { id },
@@ -162,7 +162,7 @@ router.delete('/ads/:id', async (req: Request, res: Response) => {
 // Ban user
 router.post('/users/:id/ban', async (req: Request, res: Response) => {
   try {
-    const { id } = req.params;
+    const id = String(req.params.id);
 
     // Instead of deleting, you could add a banned field. For now, we'll mark the email as disabled
     // This is a simple implementation - in production you'd add a banned/disabled field to User model
