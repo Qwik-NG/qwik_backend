@@ -34,6 +34,8 @@ model User {
   savedAds        SavedAd[]
   reviews         Review[]
   reports         Report[]
+  conversationParticipants ConversationParticipant[]
+  messagesSent    Message[]
   resetToken      String?
   resetTokenExpAt DateTime?
 }
@@ -79,11 +81,52 @@ model Ad {
   savedBy         SavedAd[]
   reviews         Review[]
   reports         Report[]
+  conversations   Conversation[]
 
   @@index([categoryId])
   @@index([location])
   @@index([createdAt])
   @@index([status])
+}
+
+model Conversation {
+  id           String                    @id @default(cuid())
+  adId         String?
+  createdAt    DateTime                  @default(now())
+  updatedAt    DateTime                  @updatedAt
+  ad           Ad?                       @relation(fields: [adId], references: [id], onDelete: SetNull)
+  participants ConversationParticipant[]
+  messages     Message[]
+
+  @@index([adId])
+  @@index([updatedAt])
+}
+
+model ConversationParticipant {
+  id             String       @id @default(cuid())
+  conversationId String
+  userId         String
+  createdAt      DateTime     @default(now())
+  lastReadAt     DateTime?
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, userId])
+  @@index([userId])
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  conversationId String
+  senderId       String
+  text           String
+  readAt         DateTime?
+  createdAt      DateTime     @default(now())
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender         User         @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+  @@index([senderId])
 }
 
 model AdImage {

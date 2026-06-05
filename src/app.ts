@@ -9,8 +9,12 @@ import router from "./routes";
 export const app = express();
 app.use(cors({ 
   origin: (origin, callback) => {
-    // Allow any localhost port (for Vite dev which might pick random ports)
-    if (!origin || /^http:\/\/localhost:\d+$/.test(origin)) {
+    // Allow same-origin server checks, any local dev origin, and the configured frontend origin.
+    if (
+      !origin ||
+      /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin) ||
+      origin === env.frontendUrl
+    ) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));

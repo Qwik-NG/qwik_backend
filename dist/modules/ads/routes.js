@@ -84,7 +84,7 @@ router.post("/", auth_1.requireAuth, async (req, res, next) => {
         const b = (0, validation_1.parseOrThrow)(zod_1.z.object({
             categoryId: zod_1.z.string().min(1),
             title: zod_1.z.string().min(3),
-            description: zod_1.z.string().min(10),
+            description: zod_1.z.string().min(1),
             price: zod_1.z.number().nonnegative(),
             location: zod_1.z.string().min(2),
             brand: zod_1.z.string().optional(),
@@ -125,7 +125,7 @@ router.patch("/:id", auth_1.requireAuth, async (req, res, next) => {
             return res.status(403).json({ success: false, message: "Forbidden" });
         const b = (0, validation_1.parseOrThrow)(zod_1.z.object({
             title: zod_1.z.string().min(3).optional(),
-            description: zod_1.z.string().min(10).optional(),
+            description: zod_1.z.string().min(1).optional(),
             price: zod_1.z.number().nonnegative().optional(),
             location: zod_1.z.string().min(2).optional(),
             brand: zod_1.z.string().optional(),

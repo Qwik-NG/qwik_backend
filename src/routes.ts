@@ -5,6 +5,8 @@ import categoryRoutes from "./modules/categories/routes";
 import adRoutes from "./modules/ads/routes";
 import uploadRoutes from "./modules/uploads/routes";
 import adminRoutes from "./modules/admin/routes";
+import conversationRoutes from "./modules/conversations/routes";
+import messageRoutes from "./modules/messages/routes";
 
 const router = Router();
 router.get("/health", (_req, res) => res.json({ success: true, data: { status: "ok" } }));
@@ -14,4 +16,6 @@ router.use("/categories", categoryRoutes);
 router.use("/ads", adRoutes);
 router.use("/uploads", uploadRoutes);
 router.use("/admin", adminRoutes);
+router.use("/conversations", conversationRoutes);
+router.use("/messages", messageRoutes);
 export default router;

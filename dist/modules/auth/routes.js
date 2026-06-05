@@ -32,7 +32,7 @@ router.post("/login", async (req, res, next) => {
         if (!user || !(await bcrypt_1.default.compare(b.password, user.passwordHash)))
             return res.status(401).json({ success: false, message: "Invalid credentials" });
         const token = (0, jwt_1.signAuthToken)({ userId: user.id, email: user.email });
-        res.json({ success: true, data: { token, user: { id: user.id, email: user.email, fullName: user.fullName } } });
+        res.json({ success: true, data: { token, user: { id: user.id, email: user.email, fullName: user.fullName, role: user.role } } });
     }
     catch (e) {
         next(e);

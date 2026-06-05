@@ -4,7 +4,9 @@ exports.parseOrThrow = parseOrThrow;
 function parseOrThrow(schema, data) {
     const result = schema.safeParse(data);
     if (!result.success) {
-        throw new Error(result.error.issues.map((i) => i.message).join(", "));
+        const error = new Error(result.error.issues.map((i) => i.message).join(", "));
+        error.status = 400;
+        throw error;
     }
     return result.data;
 }

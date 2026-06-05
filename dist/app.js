@@ -12,7 +12,19 @@ const requestLogger_1 = require("./middleware/requestLogger");
 const errors_1 = require("./middleware/errors");
 const routes_1 = __importDefault(require("./routes"));
 exports.app = (0, express_1.default)();
-exports.app.use((0, cors_1.default)({ origin: env_1.env.frontendUrl }));
+exports.app.use((0, cors_1.default)({
+    origin: (origin, callback) => {
+        // Allow same-origin server checks, any local dev origin, and the configured frontend origin.
+        if (!origin ||
+            /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin) ||
+            origin === env_1.env.frontendUrl) {
+            callback(null, true);
+        }
+        else {
+            callback(new Error('Not allowed by CORS'));
+        }
+    }
+}));
 exports.app.use(express_1.default.json({ limit: "2mb" }));
 exports.app.use(requestLogger_1.requestLogger);
 exports.app.use("/uploads", express_1.default.static(path_1.default.resolve("uploads")));

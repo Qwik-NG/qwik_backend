@@ -22,6 +22,23 @@ router.patch("/me", auth_1.requireAuth, async (req, res, next) => {
         next(e);
     }
 });
+router.get("/me/ads", auth_1.requireAuth, async (req, res, next) => {
+    try {
+        const status = String(req.query.status ?? "").trim();
+        const ads = await prisma_1.prisma.ad.findMany({
+            where: {
+                userId: req.auth.userId,
+                ...(status ? { status: status } : {}),
+            },
+            include: { images: true, category: true, user: true },
+            orderBy: { createdAt: "desc" },
+        });
+        res.json({ success: true, data: ads });
+    }
+    catch (e) {
+        next(e);
+    }
+});
 router.get("/me/saved", auth_1.requireAuth, async (req, res, next) => { try {
     const s = await prisma_1.prisma.savedAd.findMany({ where: { userId: req.auth.userId }, include: { ad: { include: { images: true, category: true } } }, orderBy: { createdAt: "desc" } });
     res.json({ success: true, data: s.map((x) => x.ad) });

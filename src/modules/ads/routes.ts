@@ -85,7 +85,7 @@ router.post("/", requireAuth, async (req, res, next) => {
       z.object({
         categoryId: z.string().min(1),
         title: z.string().min(3),
-        description: z.string().min(10),
+        description: z.string().min(1),
         price: z.number().nonnegative(),
         location: z.string().min(2),
         brand: z.string().optional(),
@@ -129,7 +129,7 @@ router.patch("/:id", requireAuth, async (req, res, next) => {
     const b = parseOrThrow(
       z.object({
         title: z.string().min(3).optional(),
-        description: z.string().min(10).optional(),
+        description: z.string().min(1).optional(),
         price: z.number().nonnegative().optional(),
         location: z.string().min(2).optional(),
         brand: z.string().optional(),
