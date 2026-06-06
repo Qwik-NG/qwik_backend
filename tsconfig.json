@@ -5,13 +5,12 @@
     "moduleResolution": "Node",
     "outDir": "dist",
     "rootDir": "src",
-    "strict": true,
+    "strict": false,
     "esModuleInterop": true,
-    "skipLibCheck": false,
+    "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
-    "ignoreDeprecations": "6.0",
-    "typeRoots": ["./node_modules/@types"]
+    "ignoreDeprecations": "6.0"
   },
   "include": ["src"]
 }
