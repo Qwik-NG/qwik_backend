@@ -10,8 +10,7 @@
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "strict": false,
-    "noImplicitAny": false,
-    "types": ["node"]
+    "noImplicitAny": false
   },
   "include": ["src"],
   "exclude": ["node_modules", "dist"]
