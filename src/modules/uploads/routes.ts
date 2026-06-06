@@ -1,14 +1,23 @@
-import { Router } from "express";
+import { Router, Request } from "express";
 import { mkdir, writeFile } from "fs/promises";
 import multer from "multer";
 import path from "path";
 import { randomUUID } from "crypto";
 import { isCloudinaryEnabled, uploadImageBuffer } from "../../lib/cloudinary";
 
+interface UploadedFile {
+  fieldname: string;
+  originalname: string;
+  encoding: string;
+  mimetype: string;
+  size: number;
+  buffer: Buffer;
+}
+
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
-async function saveImageLocally(file: Express.Multer.File, req: Parameters<typeof router.post>[1] extends never ? never : any) {
+async function saveImageLocally(file: UploadedFile, req: Request) {
   const extension = path.extname(file.originalname) || ".jpg";
   const filename = `${randomUUID()}${extension}`;
   const uploadDirectory = path.resolve("uploads");
@@ -21,7 +30,7 @@ async function saveImageLocally(file: Express.Multer.File, req: Parameters<typeo
 
 router.post("/images", upload.array("images", 10), async (req, res, next) => {
   try {
-    const files = (req.files as Express.Multer.File[] | undefined) ?? [];
+    const files = (req.files as UploadedFile[] | undefined) ?? [];
     const urls = await Promise.all(
       files.map((file) => {
         if (isCloudinaryEnabled()) {
