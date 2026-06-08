@@ -18,14 +18,28 @@ async function main() {
     await prisma.category.deleteMany({});
     console.log('✓ Cleared existing data');
 
-    // Create categories
+    // Create canonical top-level categories
+    const topCategories = await Promise.all([
+      prisma.category.create({ data: { name: 'Properties', slug: 'properties' } }),
+      prisma.category.create({ data: { name: 'Vehicles', slug: 'vehicles' } }),
+      prisma.category.create({ data: { name: 'Phones & Tablets', slug: 'phones-tablets' } }),
+      prisma.category.create({ data: { name: 'Electronics', slug: 'electronics' } }),
+      prisma.category.create({ data: { name: 'Fashion', slug: 'fashion' } }),
+      prisma.category.create({ data: { name: 'Beauty', slug: 'beauty' } }),
+      prisma.category.create({ data: { name: 'Furniture & Appliances', slug: 'furniture-appliances' } }),
+      prisma.category.create({ data: { name: 'Jobs', slug: 'jobs' } }),
+    ]);
+
+    const electronics = topCategories.find((category) => category.slug === 'electronics');
+    if (!electronics) {
+      throw new Error('Electronics category was not created');
+    }
+
     await prisma.category.createMany({
       data: [
-        { name: 'Electronics', slug: 'electronics' },
-        { name: 'Cars', slug: 'cars' },
-        { name: 'Fashion', slug: 'fashion' },
-        { name: 'Furniture', slug: 'furniture' },
-        { name: 'Properties', slug: 'properties' },
+        { name: 'Laptops', slug: 'laptops', parentId: electronics.id },
+        { name: 'Desktop Computers', slug: 'desktop-computers', parentId: electronics.id },
+        { name: 'Servers', slug: 'servers', parentId: electronics.id },
       ],
     });
     console.log('✓ Categories created');
@@ -213,7 +227,7 @@ async function main() {
     const adsData = [
       {
         id: 'ad1',
-        categoryId: 'electronics',
+        categoryId: 'phones-tablets',
         title: 'iPhone 7',
         description: 'Neat and clean, all functions working. Strong battery',
         price: 350000,
@@ -234,7 +248,7 @@ async function main() {
       },
       {
         id: 'ad2',
-        categoryId: 'cars',
+        categoryId: 'vehicles',
         title: 'Mercedes-Benz GLA 250 2015 Blue',
         description: 'Keyless entry Panoramic roof Led intelligent light Custom duty fully paid This is a very sharp car and drives Premium speakers',
         price: 11000000,
@@ -254,7 +268,7 @@ async function main() {
       },
       {
         id: 'ad3',
-        categoryId: 'electronics',
+        categoryId: 'laptops',
         title: 'Apple MacBook Pro',
         description: 'New Laptop Apple MacBook Pro 32GB Apple M1 SSD 1T',
         price: 1900000,
@@ -332,7 +346,7 @@ async function main() {
       },
       {
         id: 'ad7',
-        categoryId: 'cars',
+        categoryId: 'vehicles',
         title: 'Honda Civic 2018',
         description: 'Automatic transmission, clean title, well maintained',
         price: 1800000,
@@ -371,7 +385,7 @@ async function main() {
       },
       {
         id: 'ad9',
-        categoryId: 'furniture',
+        categoryId: 'furniture-appliances',
         title: 'Leather Sofa Set',
         description: 'L-shaped comfortable leather sofa, spacious and elegant',
         price: 280000,

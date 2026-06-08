@@ -6,16 +6,82 @@ const prisma_1 = require("../../lib/prisma");
 const validation_1 = require("../../utils/validation");
 const auth_1 = require("../../middleware/auth");
 const router = (0, express_1.Router)();
+const categoryAliases = {
+    car: "vehicles",
+    cars: "vehicles",
+    vehicle: "vehicles",
+    vehicles: "vehicles",
+    phone: "phones-tablets",
+    phones: "phones-tablets",
+    tablet: "phones-tablets",
+    tablets: "phones-tablets",
+    "phones-tablet": "phones-tablets",
+    "phones-tablets": "phones-tablets",
+    "phones-and-tablets": "phones-tablets",
+    electronics: "electronics",
+    laptop: "laptops",
+    laptops: "laptops",
+    "desktop-computer": "desktop-computers",
+    "desktop-computers": "desktop-computers",
+    server: "servers",
+    servers: "servers",
+    furniture: "furniture-appliances",
+    furnitures: "furniture-appliances",
+    appliances: "furniture-appliances",
+    "furniture-appliances": "furniture-appliances",
+    "furniture-and-appliances": "furniture-appliances",
+    home: "properties",
+    property: "properties",
+    properties: "properties",
+    fashion: "fashion",
+    beauty: "beauty",
+    job: "jobs",
+    jobs: "jobs",
+};
+function normalizeSlug(value) {
+    const slug = value.trim().toLowerCase().replace(/&/g, "and").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    return categoryAliases[slug] ?? slug;
+}
+async function getCategoryIds(input) {
+    if (input.subcategory) {
+        const subcategory = await prisma_1.prisma.category.findUnique({
+            where: { slug: normalizeSlug(input.subcategory) },
+            select: { id: true },
+        });
+        return subcategory ? [subcategory.id] : [];
+    }
+    if (input.categoryId) {
+        return [input.categoryId];
+    }
+    if (!input.category) {
+        return undefined;
+    }
+    const category = await prisma_1.prisma.category.findUnique({
+        where: { slug: normalizeSlug(input.category) },
+        include: { children: { select: { id: true } } },
+    });
+    if (!category) {
+        return [];
+    }
+    return [category.id, ...category.children.map((child) => child.id)];
+}
 router.get("/", async (req, res, next) => {
     try {
         const page = Number(req.query.page ?? 1);
-        const pageSize = Number(req.query.pageSize ?? 12);
-        const search = String(req.query.search ?? "").trim();
+        const pageSize = Number(req.query.pageSize ?? 24);
+        const search = String(req.query.q ?? req.query.search ?? "").trim();
         const location = String(req.query.location ?? "").trim();
         const categoryId = String(req.query.categoryId ?? "").trim();
+        const category = String(req.query.category ?? "").trim();
+        const subcategory = String(req.query.subcategory ?? "").trim();
         const minPrice = req.query.minPrice ? Number(req.query.minPrice) : undefined;
         const maxPrice = req.query.maxPrice ? Number(req.query.maxPrice) : undefined;
         const imagesLimit = req.query.imagesLimit ? Number(req.query.imagesLimit) : undefined;
+        const categoryIds = await getCategoryIds({
+            categoryId: categoryId || undefined,
+            category: category || undefined,
+            subcategory: subcategory || undefined,
+        });
         const where = {
             status: "ACTIVE",
             ...(search
@@ -31,7 +97,7 @@ router.get("/", async (req, res, next) => {
             ...(location
                 ? { location: { contains: location, mode: "insensitive" } }
                 : {}),
-            ...(categoryId ? { categoryId } : {}),
+            ...(categoryIds ? { categoryId: { in: categoryIds } } : {}),
             ...(minPrice !== undefined || maxPrice !== undefined
                 ? {
                     price: {
@@ -45,7 +111,11 @@ router.get("/", async (req, res, next) => {
             prisma_1.prisma.ad.count({ where }),
             prisma_1.prisma.ad.findMany({
                 where,
-                include: { images: true, category: true, user: true },
+                include: {
+                    images: true,
+                    category: { include: { parent: true, children: true } },
+                    user: true,
+                },
                 orderBy: { createdAt: "desc" },
                 skip: (page - 1) * pageSize,
                 take: pageSize,
