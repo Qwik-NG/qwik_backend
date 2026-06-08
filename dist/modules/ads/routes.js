@@ -122,13 +122,13 @@ router.get("/", async (req, res, next) => {
                 }
                 : {}),
         };
-        const [total, ads] = await Promise.all([
+        const [total, ads] = await prisma_1.prisma.$transaction([
             prisma_1.prisma.ad.count({ where }),
             prisma_1.prisma.ad.findMany({
                 where,
                 include: {
                     images: true,
-                    category: { include: { parent: true, children: true } },
+                    category: true,
                     user: { select: sellerSelect },
                 },
                 orderBy: { createdAt: "desc" },
@@ -252,7 +252,7 @@ router.delete("/:id", auth_1.requireAuth, async (req, res, next) => {
 router.post("/:id/save", auth_1.requireAuth, async (req, res, next) => {
     try {
         const id = String(req.params.id);
-        if (!(await prisma_1.prisma.ad.findUnique({ where: { id } })))
+        if (!(await prisma_1.prisma.ad.findUnique({ where: { id }, select: { id: true } })))
             return res.status(404).json({ success: false, message: "Ad not found" });
         await prisma_1.prisma.savedAd.upsert({
             where: { userId_adId: { userId: req.auth.userId, adId: id } },
@@ -308,7 +308,7 @@ router.get("/:id/reviews", async (req, res, next) => {
 router.post("/:id/reviews", auth_1.requireAuth, async (req, res, next) => {
     try {
         const id = String(req.params.id);
-        if (!(await prisma_1.prisma.ad.findUnique({ where: { id } })))
+        if (!(await prisma_1.prisma.ad.findUnique({ where: { id }, select: { id: true } })))
             return res.status(404).json({ success: false, message: "Ad not found" });
         const b = (0, validation_1.parseOrThrow)(zod_1.z.object({
             rating: zod_1.z.number().int().min(1).max(5),
@@ -339,7 +339,7 @@ router.post("/:id/reviews", auth_1.requireAuth, async (req, res, next) => {
 router.post("/:id/report", auth_1.requireAuth, async (req, res, next) => {
     try {
         const id = String(req.params.id);
-        if (!(await prisma_1.prisma.ad.findUnique({ where: { id } })))
+        if (!(await prisma_1.prisma.ad.findUnique({ where: { id }, select: { id: true } })))
             return res.status(404).json({ success: false, message: "Ad not found" });
         const b = (0, validation_1.parseOrThrow)(zod_1.z.object({
             reason: zod_1.z.string().min(5),

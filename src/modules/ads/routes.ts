@@ -136,13 +136,13 @@ router.get("/", async (req, res, next) => {
           }
         : {}),
     };
-    const [total, ads] = await Promise.all([
+    const [total, ads] = await prisma.$transaction([
       prisma.ad.count({ where }),
       prisma.ad.findMany({
         where,
         include: {
           images: true,
-          category: { include: { parent: true, children: true } },
+          category: true,
           user: { select: sellerSelect },
         },
         orderBy: { createdAt: "desc" },
@@ -272,7 +272,7 @@ router.delete("/:id", requireAuth, async (req, res, next) => {
 router.post("/:id/save", requireAuth, async (req, res, next) => {
   try {
     const id = String(req.params.id);
-    if (!(await prisma.ad.findUnique({ where: { id } })))
+    if (!(await prisma.ad.findUnique({ where: { id }, select: { id: true } })))
       return res.status(404).json({ success: false, message: "Ad not found" });
     await prisma.savedAd.upsert({
       where: { userId_adId: { userId: req.auth!.userId, adId: id } },
@@ -328,7 +328,7 @@ router.get("/:id/reviews", async (req, res, next) => {
 router.post("/:id/reviews", requireAuth, async (req, res, next) => {
   try {
     const id = String(req.params.id);
-    if (!(await prisma.ad.findUnique({ where: { id } })))
+    if (!(await prisma.ad.findUnique({ where: { id }, select: { id: true } })))
       return res.status(404).json({ success: false, message: "Ad not found" });
     
     const b = parseOrThrow(
@@ -363,7 +363,7 @@ router.post("/:id/reviews", requireAuth, async (req, res, next) => {
 router.post("/:id/report", requireAuth, async (req, res, next) => {
   try {
     const id = String(req.params.id);
-    if (!(await prisma.ad.findUnique({ where: { id } })))
+    if (!(await prisma.ad.findUnique({ where: { id }, select: { id: true } })))
       return res.status(404).json({ success: false, message: "Ad not found" });
     
     const b = parseOrThrow(
