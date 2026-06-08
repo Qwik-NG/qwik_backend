@@ -16,6 +16,12 @@ const sellerSelect = {
   profile: true,
 };
 
+const adInclude = {
+  images: true,
+  category: true,
+  user: { select: sellerSelect },
+};
+
 const categoryAliases: Record<string, string> = {
   car: "vehicles",
   cars: "vehicles",
@@ -164,7 +170,7 @@ router.get("/:id", async (req, res, next) => {
     const id = String(req.params.id);
     const ad = await prisma.ad.findUnique({
       where: { id },
-      include: { images: true, category: true, user: { select: sellerSelect } },
+      include: adInclude,
     });
     if (!ad)
       return res.status(404).json({ success: false, message: "Ad not found" });
@@ -204,7 +210,7 @@ router.post("/", requireAuth, async (req, res, next) => {
         specifications: b.specifications as any,
         images: { createMany: { data: b.imageUrls.map((url) => ({ url })) } },
       },
-      include: { images: true, category: true },
+      include: adInclude,
     });
     res.status(201).json({ success: true, data: ad });
   } catch (e) {
@@ -241,7 +247,7 @@ router.patch("/:id", requireAuth, async (req, res, next) => {
       data: await prisma.ad.update({
         where: { id },
         data,
-        include: { images: true, category: true },
+        include: adInclude,
       }),
     });
   } catch (e) {
@@ -274,6 +280,19 @@ router.post("/:id/save", requireAuth, async (req, res, next) => {
       create: { userId: req.auth!.userId, adId: id },
     });
     res.json({ success: true, message: "Ad saved" });
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.get("/:id/saved", requireAuth, async (req, res, next) => {
+  try {
+    const id = String(req.params.id);
+    const saved = await prisma.savedAd.findUnique({
+      where: { userId_adId: { userId: req.auth!.userId, adId: id } },
+      select: { id: true },
+    });
+    res.json({ success: true, data: { saved: Boolean(saved) } });
   } catch (e) {
     next(e);
   }
@@ -319,6 +338,11 @@ router.post("/:id/reviews", requireAuth, async (req, res, next) => {
       }),
       req.body,
     );
+    const existingReview = await prisma.review.findFirst({
+      where: { adId: id, userId: req.auth!.userId },
+      select: { id: true },
+    });
+    if (existingReview) return res.status(409).json({ success: false, message: "You have already reviewed this ad" });
 
     const review = await prisma.review.create({
       data: {
@@ -348,6 +372,11 @@ router.post("/:id/report", requireAuth, async (req, res, next) => {
       }),
       req.body,
     );
+    const existingReport = await prisma.report.findFirst({
+      where: { adId: id, userId: req.auth!.userId, status: "PENDING" },
+      select: { id: true },
+    });
+    if (existingReport) return res.status(409).json({ success: false, message: "You have already reported this ad" });
 
     const report = await prisma.report.create({
       data: {
@@ -375,7 +404,7 @@ router.patch("/:id/mark-unavailable", requireAuth, async (req, res, next) => {
     const updated = await prisma.ad.update({
       where: { id },
       data: { status: "ARCHIVED" },
-      include: { images: true, category: true },
+      include: adInclude,
     });
     res.json({ success: true, message: "Ad marked unavailable", data: updated });
   } catch (e) {

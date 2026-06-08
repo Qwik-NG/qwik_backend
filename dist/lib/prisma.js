@@ -11,7 +11,7 @@ function getDatabaseUrl() {
         if (url.hostname.includes("pooler.supabase.com")) {
             url.searchParams.set("pgbouncer", "true");
             if (!url.searchParams.has("connection_limit")) {
-                url.searchParams.set("connection_limit", "1");
+                url.searchParams.set("connection_limit", "5");
             }
         }
         return url.toString();

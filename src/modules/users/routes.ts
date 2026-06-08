@@ -16,6 +16,7 @@ const sellerSelect = {
   createdAt: true,
   profile: true,
 };
+const adInclude = { images: true, category: true, user: { select: sellerSelect } };
 router.get("/me", requireAuth, async (req, res, next) => {
   try {
     const user = await prisma.user.findUnique({ where: { id: req.auth!.userId }, include: { profile: true } });
@@ -38,13 +39,13 @@ router.get("/me/ads", requireAuth, async (req, res, next) => {
         userId: req.auth!.userId,
         ...(status ? { status: status as any } : {}),
       },
-      include: { images: true, category: true, user: { select: sellerSelect } },
+      include: adInclude,
       orderBy: { createdAt: "desc" },
     });
     res.json({ success: true, data: ads });
   } catch (e) { next(e); }
 });
-router.get("/me/saved", requireAuth, async (req, res, next) => { try { const s = await prisma.savedAd.findMany({ where: { userId: req.auth!.userId }, include: { ad: { include: { images: true, category: true } } }, orderBy: { createdAt: "desc" } }); res.json({ success: true, data: s.map((x) => x.ad) }); } catch (e) { next(e); } });
+router.get("/me/saved", requireAuth, async (req, res, next) => { try { const s = await prisma.savedAd.findMany({ where: { userId: req.auth!.userId }, include: { ad: { include: adInclude } }, orderBy: { createdAt: "desc" } }); res.json({ success: true, data: s.map((x) => ({ ...x.ad, isSaved: true })) }); } catch (e) { next(e); } });
 router.get("/:id", async (req, res, next) => {
   try {
     const user = await prisma.user.findUnique({ where: { id: String(req.params.id) }, include: { profile: true } });
