@@ -6,6 +6,16 @@ const prisma_1 = require("../../lib/prisma");
 const validation_1 = require("../../utils/validation");
 const auth_1 = require("../../middleware/auth");
 const router = (0, express_1.Router)();
+const sellerSelect = {
+    id: true,
+    email: true,
+    fullName: true,
+    phone: true,
+    location: true,
+    role: true,
+    createdAt: true,
+    profile: true,
+};
 const categoryAliases = {
     car: "vehicles",
     cars: "vehicles",
@@ -114,7 +124,7 @@ router.get("/", async (req, res, next) => {
                 include: {
                     images: true,
                     category: { include: { parent: true, children: true } },
-                    user: true,
+                    user: { select: sellerSelect },
                 },
                 orderBy: { createdAt: "desc" },
                 skip: (page - 1) * pageSize,
@@ -139,7 +149,7 @@ router.get("/:id", async (req, res, next) => {
         const id = String(req.params.id);
         const ad = await prisma_1.prisma.ad.findUnique({
             where: { id },
-            include: { images: true, category: true, user: true },
+            include: { images: true, category: true, user: { select: sellerSelect } },
         });
         if (!ad)
             return res.status(404).json({ success: false, message: "Ad not found" });

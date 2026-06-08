@@ -2,4 +2,28 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.prisma = void 0;
 const client_1 = require("@prisma/client");
-exports.prisma = new client_1.PrismaClient();
+function getDatabaseUrl() {
+    const databaseUrl = process.env.DATABASE_URL;
+    if (!databaseUrl)
+        return undefined;
+    try {
+        const url = new URL(databaseUrl);
+        if (url.hostname.includes("pooler.supabase.com")) {
+            url.searchParams.set("pgbouncer", "true");
+            if (!url.searchParams.has("connection_limit")) {
+                url.searchParams.set("connection_limit", "1");
+            }
+        }
+        return url.toString();
+    }
+    catch {
+        return databaseUrl;
+    }
+}
+exports.prisma = new client_1.PrismaClient({
+    datasources: {
+        db: {
+            url: getDatabaseUrl(),
+        },
+    },
+});

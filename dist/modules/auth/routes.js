@@ -11,15 +11,16 @@ const prisma_1 = require("../../lib/prisma");
 const jwt_1 = require("../../utils/jwt");
 const validation_1 = require("../../utils/validation");
 const auth_1 = require("../../middleware/auth");
+const userResponse_1 = require("../../utils/userResponse");
 const router = (0, express_1.Router)();
 router.post("/register", async (req, res, next) => {
     try {
         const b = (0, validation_1.parseOrThrow)(zod_1.z.object({ email: zod_1.z.string().email(), password: zod_1.z.string().min(6), fullName: zod_1.z.string().min(2), phone: zod_1.z.string().optional(), location: zod_1.z.string().optional() }), req.body);
         if (await prisma_1.prisma.user.findUnique({ where: { email: b.email.toLowerCase() } }))
             return res.status(409).json({ success: false, message: "Email already in use" });
-        const user = await prisma_1.prisma.user.create({ data: { email: b.email.toLowerCase(), passwordHash: await bcrypt_1.default.hash(b.password, 10), fullName: b.fullName, phone: b.phone, location: b.location, profile: { create: {} } } });
+        const user = await prisma_1.prisma.user.create({ data: { email: b.email.toLowerCase(), passwordHash: await bcrypt_1.default.hash(b.password, 10), fullName: b.fullName, phone: b.phone, location: b.location, profile: { create: {} } }, include: { profile: true } });
         const token = (0, jwt_1.signAuthToken)({ userId: user.id, email: user.email });
-        res.status(201).json({ success: true, data: { token, user: { id: user.id, email: user.email, fullName: user.fullName } } });
+        res.status(201).json({ success: true, data: { token, user: (0, userResponse_1.toAuthUser)(user) } });
     }
     catch (e) {
         next(e);
@@ -28,11 +29,11 @@ router.post("/register", async (req, res, next) => {
 router.post("/login", async (req, res, next) => {
     try {
         const b = (0, validation_1.parseOrThrow)(zod_1.z.object({ email: zod_1.z.string().email(), password: zod_1.z.string().min(6) }), req.body);
-        const user = await prisma_1.prisma.user.findUnique({ where: { email: b.email.toLowerCase() } });
+        const user = await prisma_1.prisma.user.findUnique({ where: { email: b.email.toLowerCase() }, include: { profile: true } });
         if (!user || !(await bcrypt_1.default.compare(b.password, user.passwordHash)))
             return res.status(401).json({ success: false, message: "Invalid credentials" });
         const token = (0, jwt_1.signAuthToken)({ userId: user.id, email: user.email });
-        res.json({ success: true, data: { token, user: { id: user.id, email: user.email, fullName: user.fullName, role: user.role } } });
+        res.json({ success: true, data: { token, user: (0, userResponse_1.toAuthUser)(user) } });
     }
     catch (e) {
         next(e);
@@ -67,7 +68,10 @@ router.post("/reset-password", async (req, res, next) => {
 });
 router.get("/me", auth_1.requireAuth, async (req, res, next) => {
     try {
-        res.json({ success: true, data: await prisma_1.prisma.user.findUnique({ where: { id: req.auth.userId }, include: { profile: true } }) });
+        const user = await prisma_1.prisma.user.findUnique({ where: { id: req.auth.userId }, include: { profile: true } });
+        if (!user)
+            return res.status(404).json({ success: false, message: "User not found" });
+        res.json({ success: true, data: (0, userResponse_1.toAuthUser)(user) });
     }
     catch (e) {
         next(e);

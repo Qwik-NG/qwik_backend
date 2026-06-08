@@ -5,18 +5,34 @@ const zod_1 = require("zod");
 const auth_1 = require("../../middleware/auth");
 const prisma_1 = require("../../lib/prisma");
 const validation_1 = require("../../utils/validation");
+const userResponse_1 = require("../../utils/userResponse");
 const router = (0, express_1.Router)();
-router.get("/me", auth_1.requireAuth, async (req, res, next) => { try {
-    res.json({ success: true, data: await prisma_1.prisma.user.findUnique({ where: { id: req.auth.userId }, include: { profile: true } }) });
-}
-catch (e) {
-    next(e);
-} });
+const sellerSelect = {
+    id: true,
+    email: true,
+    fullName: true,
+    phone: true,
+    location: true,
+    role: true,
+    createdAt: true,
+    profile: true,
+};
+router.get("/me", auth_1.requireAuth, async (req, res, next) => {
+    try {
+        const user = await prisma_1.prisma.user.findUnique({ where: { id: req.auth.userId }, include: { profile: true } });
+        if (!user)
+            return res.status(404).json({ success: false, message: "User not found" });
+        res.json({ success: true, data: (0, userResponse_1.toAuthUser)(user) });
+    }
+    catch (e) {
+        next(e);
+    }
+});
 router.patch("/me", auth_1.requireAuth, async (req, res, next) => {
     try {
         const b = (0, validation_1.parseOrThrow)(zod_1.z.object({ fullName: zod_1.z.string().min(2).optional(), phone: zod_1.z.string().optional(), location: zod_1.z.string().optional(), bio: zod_1.z.string().optional(), avatarUrl: zod_1.z.string().url().optional() }), req.body);
         const user = await prisma_1.prisma.user.update({ where: { id: req.auth.userId }, data: { fullName: b.fullName, phone: b.phone, location: b.location, profile: { upsert: { create: { bio: b.bio, avatarUrl: b.avatarUrl }, update: { bio: b.bio, avatarUrl: b.avatarUrl } } } }, include: { profile: true } });
-        res.json({ success: true, data: user });
+        res.json({ success: true, data: (0, userResponse_1.toAuthUser)(user) });
     }
     catch (e) {
         next(e);
@@ -30,7 +46,7 @@ router.get("/me/ads", auth_1.requireAuth, async (req, res, next) => {
                 userId: req.auth.userId,
                 ...(status ? { status: status } : {}),
             },
-            include: { images: true, category: true, user: true },
+            include: { images: true, category: true, user: { select: sellerSelect } },
             orderBy: { createdAt: "desc" },
         });
         res.json({ success: true, data: ads });
@@ -46,4 +62,15 @@ router.get("/me/saved", auth_1.requireAuth, async (req, res, next) => { try {
 catch (e) {
     next(e);
 } });
+router.get("/:id", async (req, res, next) => {
+    try {
+        const user = await prisma_1.prisma.user.findUnique({ where: { id: String(req.params.id) }, include: { profile: true } });
+        if (!user)
+            return res.status(404).json({ success: false, message: "User not found" });
+        res.json({ success: true, data: (0, userResponse_1.toPublicUser)(user) });
+    }
+    catch (e) {
+        next(e);
+    }
+});
 exports.default = router;

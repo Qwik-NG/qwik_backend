@@ -3,14 +3,31 @@ import { z } from "zod";
 import { requireAuth } from "../../middleware/auth";
 import { prisma } from "../../lib/prisma";
 import { parseOrThrow } from "../../utils/validation";
+import { toAuthUser, toPublicUser } from "../../utils/userResponse";
 
 const router = Router();
-router.get("/me", requireAuth, async (req, res, next) => { try { res.json({ success: true, data: await prisma.user.findUnique({ where: { id: req.auth!.userId }, include: { profile: true } }) }); } catch (e) { next(e); } });
+const sellerSelect = {
+  id: true,
+  email: true,
+  fullName: true,
+  phone: true,
+  location: true,
+  role: true,
+  createdAt: true,
+  profile: true,
+};
+router.get("/me", requireAuth, async (req, res, next) => {
+  try {
+    const user = await prisma.user.findUnique({ where: { id: req.auth!.userId }, include: { profile: true } });
+    if (!user) return res.status(404).json({ success: false, message: "User not found" });
+    res.json({ success: true, data: toAuthUser(user) });
+  } catch (e) { next(e); }
+});
 router.patch("/me", requireAuth, async (req, res, next) => {
   try {
     const b = parseOrThrow(z.object({ fullName: z.string().min(2).optional(), phone: z.string().optional(), location: z.string().optional(), bio: z.string().optional(), avatarUrl: z.string().url().optional() }), req.body);
     const user = await prisma.user.update({ where: { id: req.auth!.userId }, data: { fullName: b.fullName, phone: b.phone, location: b.location, profile: { upsert: { create: { bio: b.bio, avatarUrl: b.avatarUrl }, update: { bio: b.bio, avatarUrl: b.avatarUrl } } } }, include: { profile: true } });
-    res.json({ success: true, data: user });
+    res.json({ success: true, data: toAuthUser(user) });
   } catch (e) { next(e); }
 });
 router.get("/me/ads", requireAuth, async (req, res, next) => {
@@ -21,11 +38,18 @@ router.get("/me/ads", requireAuth, async (req, res, next) => {
         userId: req.auth!.userId,
         ...(status ? { status: status as any } : {}),
       },
-      include: { images: true, category: true, user: true },
+      include: { images: true, category: true, user: { select: sellerSelect } },
       orderBy: { createdAt: "desc" },
     });
     res.json({ success: true, data: ads });
   } catch (e) { next(e); }
 });
 router.get("/me/saved", requireAuth, async (req, res, next) => { try { const s = await prisma.savedAd.findMany({ where: { userId: req.auth!.userId }, include: { ad: { include: { images: true, category: true } } }, orderBy: { createdAt: "desc" } }); res.json({ success: true, data: s.map((x) => x.ad) }); } catch (e) { next(e); } });
+router.get("/:id", async (req, res, next) => {
+  try {
+    const user = await prisma.user.findUnique({ where: { id: String(req.params.id) }, include: { profile: true } });
+    if (!user) return res.status(404).json({ success: false, message: "User not found" });
+    res.json({ success: true, data: toPublicUser(user) });
+  } catch (e) { next(e); }
+});
 export default router;
