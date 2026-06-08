@@ -7,5 +7,12 @@ function notFound(_req, res) {
 }
 function errorHandler(err, _req, res, _next) {
     console.error(err);
-    res.status(err.status ?? 500).json({ success: false, message: err.message || "Internal server error" });
+    const isDatabaseError = err.name.startsWith("Prisma") ||
+        err.message.includes("Can't reach database server") ||
+        err.message.includes("Invalid `prisma");
+    res.status(err.status ?? 500).json({
+        success: false,
+        message: isDatabaseError ? "Database unavailable" : err.message || "Internal server error",
+        ...(err.errors ? { errors: err.errors } : {}),
+    });
 }

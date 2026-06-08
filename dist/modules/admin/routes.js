@@ -8,18 +8,18 @@ const router = (0, express_1.Router)();
 const requireAdmin = async (req, res, next) => {
     try {
         if (!req.auth) {
-            return res.status(401).json({ success: false, error: 'Unauthorized' });
+            return res.status(401).json({ success: false, message: 'Unauthorized' });
         }
         const user = await prisma_1.prisma.user.findUnique({
             where: { id: req.auth.userId },
         });
         if (!user || user.role !== 'ADMIN') {
-            return res.status(403).json({ success: false, error: 'Admin access required' });
+            return res.status(403).json({ success: false, message: 'Admin access required' });
         }
         next();
     }
     catch (error) {
-        res.status(500).json({ success: false, error: 'Internal server error' });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 // Apply auth middleware to all admin routes
@@ -45,7 +45,7 @@ router.get('/stats', async (req, res) => {
         });
     }
     catch (error) {
-        res.status(500).json({ success: false, error: 'Failed to fetch stats' });
+        res.status(500).json({ success: false, message: 'Failed to fetch stats' });
     }
 });
 // Get all users
@@ -70,7 +70,7 @@ router.get('/users', async (req, res) => {
         res.json({ success: true, data: users });
     }
     catch (error) {
-        res.status(500).json({ success: false, error: 'Failed to fetch users' });
+        res.status(500).json({ success: false, message: 'Failed to fetch users' });
     }
 });
 // Get all ads
@@ -92,7 +92,7 @@ router.get('/ads', async (req, res) => {
         res.json({ success: true, data: ads });
     }
     catch (error) {
-        res.status(500).json({ success: false, error: 'Failed to fetch ads' });
+        res.status(500).json({ success: false, message: 'Failed to fetch ads' });
     }
 });
 // Get all reports
@@ -112,7 +112,7 @@ router.get('/reports', async (req, res) => {
         res.json({ success: true, data: reports });
     }
     catch (error) {
-        res.status(500).json({ success: false, error: 'Failed to fetch reports' });
+        res.status(500).json({ success: false, message: 'Failed to fetch reports' });
     }
 });
 // Update report status
@@ -121,7 +121,7 @@ router.patch('/reports/:id', async (req, res) => {
         const id = String(req.params.id);
         const { status } = req.body;
         if (!['PENDING', 'RESOLVED', 'DISMISSED'].includes(status)) {
-            return res.status(400).json({ success: false, error: 'Invalid status' });
+            return res.status(400).json({ success: false, message: 'Invalid status' });
         }
         const report = await prisma_1.prisma.report.update({
             where: { id },
@@ -130,7 +130,7 @@ router.patch('/reports/:id', async (req, res) => {
         res.json({ success: true, data: report });
     }
     catch (error) {
-        res.status(500).json({ success: false, error: 'Failed to update report' });
+        res.status(500).json({ success: false, message: 'Failed to update report' });
     }
 });
 // Delete ad (mod action)
@@ -143,7 +143,7 @@ router.delete('/ads/:id', async (req, res) => {
         res.json({ success: true, message: 'Ad deleted successfully' });
     }
     catch (error) {
-        res.status(500).json({ success: false, error: 'Failed to delete ad' });
+        res.status(500).json({ success: false, message: 'Failed to delete ad' });
     }
 });
 // Ban user
@@ -159,7 +159,7 @@ router.post('/users/:id/ban', async (req, res) => {
         res.json({ success: true, message: 'User banned successfully', data: user });
     }
     catch (error) {
-        res.status(500).json({ success: false, error: 'Failed to ban user' });
+        res.status(500).json({ success: false, message: 'Failed to ban user' });
     }
 });
 exports.default = router;

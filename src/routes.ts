@@ -9,7 +9,7 @@ import conversationRoutes from "./modules/conversations/routes";
 import messageRoutes from "./modules/messages/routes";
 
 const router = Router();
-router.get("/health", (_req, res) => res.json({ success: true, data: { status: "ok" } }));
+router.get("/health", (_req, res) => res.json({ success: true, data: { status: "ok" }, message: "Qwik API is running" }));
 router.use("/auth", authRoutes);
 router.use("/users", userRoutes);
 router.use("/categories", categoryRoutes);

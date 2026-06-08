@@ -8,7 +8,7 @@ const router = Router();
 const requireAdmin = async (req: Request, res: Response, next: Function) => {
   try {
     if (!req.auth) {
-      return res.status(401).json({ success: false, error: 'Unauthorized' });
+      return res.status(401).json({ success: false, message: 'Unauthorized' });
     }
 
     const user = await prisma.user.findUnique({
@@ -16,12 +16,12 @@ const requireAdmin = async (req: Request, res: Response, next: Function) => {
     });
 
     if (!user || user.role !== 'ADMIN') {
-      return res.status(403).json({ success: false, error: 'Admin access required' });
+      return res.status(403).json({ success: false, message: 'Admin access required' });
     }
 
     next();
   } catch (error) {
-    res.status(500).json({ success: false, error: 'Internal server error' });
+    res.status(500).json({ success: false, message: 'Internal server error' });
   }
 };
 
@@ -49,7 +49,7 @@ router.get('/stats', async (req: Request, res: Response) => {
       },
     });
   } catch (error) {
-    res.status(500).json({ success: false, error: 'Failed to fetch stats' });
+    res.status(500).json({ success: false, message: 'Failed to fetch stats' });
   }
 });
 
@@ -75,7 +75,7 @@ router.get('/users', async (req: Request, res: Response) => {
 
     res.json({ success: true, data: users });
   } catch (error) {
-    res.status(500).json({ success: false, error: 'Failed to fetch users' });
+    res.status(500).json({ success: false, message: 'Failed to fetch users' });
   }
 });
 
@@ -98,7 +98,7 @@ router.get('/ads', async (req: Request, res: Response) => {
 
     res.json({ success: true, data: ads });
   } catch (error) {
-    res.status(500).json({ success: false, error: 'Failed to fetch ads' });
+    res.status(500).json({ success: false, message: 'Failed to fetch ads' });
   }
 });
 
@@ -119,7 +119,7 @@ router.get('/reports', async (req: Request, res: Response) => {
 
     res.json({ success: true, data: reports });
   } catch (error) {
-    res.status(500).json({ success: false, error: 'Failed to fetch reports' });
+    res.status(500).json({ success: false, message: 'Failed to fetch reports' });
   }
 });
 
@@ -130,7 +130,7 @@ router.patch('/reports/:id', async (req: Request, res: Response) => {
     const { status } = req.body;
 
     if (!['PENDING', 'RESOLVED', 'DISMISSED'].includes(status)) {
-      return res.status(400).json({ success: false, error: 'Invalid status' });
+      return res.status(400).json({ success: false, message: 'Invalid status' });
     }
 
     const report = await prisma.report.update({
@@ -140,7 +140,7 @@ router.patch('/reports/:id', async (req: Request, res: Response) => {
 
     res.json({ success: true, data: report });
   } catch (error) {
-    res.status(500).json({ success: false, error: 'Failed to update report' });
+    res.status(500).json({ success: false, message: 'Failed to update report' });
   }
 });
 
@@ -155,7 +155,7 @@ router.delete('/ads/:id', async (req: Request, res: Response) => {
 
     res.json({ success: true, message: 'Ad deleted successfully' });
   } catch (error) {
-    res.status(500).json({ success: false, error: 'Failed to delete ad' });
+    res.status(500).json({ success: false, message: 'Failed to delete ad' });
   }
 });
 
@@ -173,7 +173,7 @@ router.post('/users/:id/ban', async (req: Request, res: Response) => {
 
     res.json({ success: true, message: 'User banned successfully', data: user });
   } catch (error) {
-    res.status(500).json({ success: false, error: 'Failed to ban user' });
+    res.status(500).json({ success: false, message: 'Failed to ban user' });
   }
 });
 

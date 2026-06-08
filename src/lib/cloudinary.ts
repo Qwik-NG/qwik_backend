@@ -47,3 +47,38 @@ export async function uploadImageBuffer(input: {
     stream.end(buffer);
   });
 }
+
+export async function uploadBuffer(input: {
+  buffer: Buffer;
+  folder?: string;
+  filename?: string;
+  resourceType?: "auto" | "image" | "raw" | "video";
+}) {
+  if (!env.cloudinaryEnabled) {
+    throw new Error("Cloudinary is not configured");
+  }
+
+  const { buffer, folder = env.cloudinaryFolder, filename, resourceType = "auto" } = input;
+
+  return new Promise<string>((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      {
+        folder,
+        resource_type: resourceType,
+        use_filename: !!filename,
+        unique_filename: true,
+        filename_override: filename,
+      },
+      (error, result) => {
+        if (error || !result?.secure_url) {
+          reject(error ?? new Error("Cloudinary upload failed"));
+          return;
+        }
+
+        resolve(result.secure_url);
+      },
+    );
+
+    stream.end(buffer);
+  });
+}

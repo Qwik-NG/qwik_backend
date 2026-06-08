@@ -13,7 +13,7 @@ const routes_6 = __importDefault(require("./modules/admin/routes"));
 const routes_7 = __importDefault(require("./modules/conversations/routes"));
 const routes_8 = __importDefault(require("./modules/messages/routes"));
 const router = (0, express_1.Router)();
-router.get("/health", (_req, res) => res.json({ success: true, data: { status: "ok" } }));
+router.get("/health", (_req, res) => res.json({ success: true, data: { status: "ok" }, message: "Qwik API is running" }));
 router.use("/auth", routes_1.default);
 router.use("/users", routes_2.default);
 router.use("/categories", routes_3.default);

@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.isCloudinaryEnabled = isCloudinaryEnabled;
 exports.uploadImageBuffer = uploadImageBuffer;
+exports.uploadBuffer = uploadBuffer;
 const cloudinary_1 = require("cloudinary");
 const env_1 = require("../config/env");
 if (env_1.env.cloudinaryEnabled) {
@@ -24,6 +25,28 @@ async function uploadImageBuffer(input) {
         const stream = cloudinary_1.v2.uploader.upload_stream({
             folder,
             resource_type: "image",
+            use_filename: !!filename,
+            unique_filename: true,
+            filename_override: filename,
+        }, (error, result) => {
+            if (error || !result?.secure_url) {
+                reject(error ?? new Error("Cloudinary upload failed"));
+                return;
+            }
+            resolve(result.secure_url);
+        });
+        stream.end(buffer);
+    });
+}
+async function uploadBuffer(input) {
+    if (!env_1.env.cloudinaryEnabled) {
+        throw new Error("Cloudinary is not configured");
+    }
+    const { buffer, folder = env_1.env.cloudinaryFolder, filename, resourceType = "auto" } = input;
+    return new Promise((resolve, reject) => {
+        const stream = cloudinary_1.v2.uploader.upload_stream({
+            folder,
+            resource_type: resourceType,
             use_filename: !!filename,
             unique_filename: true,
             filename_override: filename,
