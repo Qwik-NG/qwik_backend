@@ -1,6 +1,8 @@
 import { Router, Request, Response } from 'express';
+import { z } from 'zod';
 import { prisma } from '../../lib/prisma';
 import { requireAuth } from '../../middleware/auth';
+import { parseOrThrow } from '../../utils/validation';
 
 const router = Router();
 
@@ -141,6 +143,85 @@ router.patch('/reports/:id', async (req: Request, res: Response) => {
     res.json({ success: true, data: report });
   } catch (error) {
     res.status(500).json({ success: false, message: 'Failed to update report' });
+  }
+});
+
+// Get verification applications for admin review
+router.get('/verifications', async (req: Request, res: Response) => {
+  try {
+    const status = String(req.query.status ?? '').trim();
+    const verifications = await prisma.verificationApplication.findMany({
+      where: status ? { status: status as any } : {},
+      include: {
+        user: {
+          select: {
+            id: true,
+            email: true,
+            fullName: true,
+            phone: true,
+            location: true,
+            profile: true,
+          },
+        },
+        documents: { orderBy: { createdAt: 'desc' } },
+        payments: { orderBy: { createdAt: 'desc' }, take: 5 },
+        reviewer: {
+          select: { id: true, fullName: true, email: true },
+        },
+      },
+      orderBy: { updatedAt: 'desc' },
+      take: 100,
+    });
+
+    res.json({ success: true, data: verifications });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Failed to fetch verifications' });
+  }
+});
+
+// Review verification application
+router.patch('/verifications/:id', async (req: Request, res: Response) => {
+  try {
+    const id = String(req.params.id);
+    const body = parseOrThrow(
+      z.object({
+        status: z.enum(['IN_REVIEW', 'APPROVED', 'REJECTED']),
+        rejectionReason: z.string().optional(),
+      }),
+      req.body,
+    );
+
+    if (body.status === 'REJECTED' && !body.rejectionReason?.trim()) {
+      return res.status(400).json({ success: false, message: 'Rejection reason is required' });
+    }
+
+    const verification = await prisma.verificationApplication.update({
+      where: { id },
+      data: {
+        status: body.status,
+        rejectionReason: body.status === 'REJECTED' ? body.rejectionReason : null,
+        reviewedAt: body.status === 'APPROVED' || body.status === 'REJECTED' ? new Date() : null,
+        reviewerId: req.auth!.userId,
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            email: true,
+            fullName: true,
+            phone: true,
+            location: true,
+            profile: true,
+          },
+        },
+        documents: true,
+        payments: { orderBy: { createdAt: 'desc' }, take: 5 },
+      },
+    });
+
+    res.json({ success: true, data: verification, message: 'Verification updated' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Failed to update verification' });
   }
 });
 

@@ -3,8 +3,9 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 enum AdStatus {
@@ -17,6 +18,37 @@ enum AdStatus {
 enum UserRole {
   USER
   ADMIN
+}
+
+enum VerificationType {
+  BUSINESS
+}
+
+enum VerificationStatus {
+  DRAFT
+  SUBMITTED
+  IN_REVIEW
+  APPROVED
+  REJECTED
+}
+
+enum VerificationPaymentStatus {
+  UNPAID
+  PENDING
+  PAID
+  FAILED
+}
+
+enum PaymentPurpose {
+  VERIFICATION
+  AD_PROMOTION
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  CANCELLED
 }
 
 model User {
@@ -36,6 +68,9 @@ model User {
   reports         Report[]
   conversationParticipants ConversationParticipant[]
   messagesSent    Message[]
+  verificationApplications VerificationApplication[] @relation("VerificationApplicant")
+  reviewedVerifications VerificationApplication[] @relation("VerificationReviewer")
+  payments        PaymentTransaction[]
   resetToken      String?
   resetTokenExpAt DateTime?
 }
@@ -87,6 +122,7 @@ model Ad {
   reviews         Review[]
   reports         Report[]
   conversations   Conversation[]
+  payments        PaymentTransaction[]
 
   @@index([categoryId])
   @@index([location])
@@ -180,4 +216,74 @@ model Report {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([adId])
+}
+
+model VerificationApplication {
+  id              String                    @id @default(cuid())
+  userId          String
+  type            VerificationType          @default(BUSINESS)
+  status          VerificationStatus        @default(DRAFT)
+  businessInfo    Json?
+  paymentStatus   VerificationPaymentStatus @default(UNPAID)
+  rejectionReason String?
+  submittedAt     DateTime?
+  reviewedAt      DateTime?
+  reviewerId      String?
+  createdAt       DateTime                  @default(now())
+  updatedAt       DateTime                  @updatedAt
+  user            User                      @relation("VerificationApplicant", fields: [userId], references: [id], onDelete: Cascade)
+  reviewer        User?                     @relation("VerificationReviewer", fields: [reviewerId], references: [id], onDelete: SetNull)
+  documents       VerificationDocument[]
+  payments        PaymentTransaction[]
+
+  @@unique([userId])
+  @@index([status])
+  @@index([reviewerId])
+}
+
+model VerificationDocument {
+  id             String                  @id @default(cuid())
+  verificationId String
+  url            String
+  name           String?
+  type           String?
+  size           Int?
+  purpose        String
+  createdAt      DateTime                @default(now())
+  verification   VerificationApplication @relation(fields: [verificationId], references: [id], onDelete: Cascade)
+
+  @@index([verificationId])
+}
+
+model PaymentTransaction {
+  id             String                   @id @default(cuid())
+  userId         String
+  verificationId String?
+  adId           String?
+  purpose        PaymentPurpose
+  provider       String                   @default("manual")
+  providerRef    String?                  @unique
+  amount         Int
+  currency       String                   @default("NGN")
+  status         PaymentStatus            @default(PENDING)
+  checkoutUrl    String?
+  metadata       Json?
+  createdAt      DateTime                 @default(now())
+  updatedAt      DateTime                 @updatedAt
+  user           User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  verification   VerificationApplication? @relation(fields: [verificationId], references: [id], onDelete: SetNull)
+  ad             Ad?                      @relation(fields: [adId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([verificationId])
+  @@index([adId])
+  @@index([status])
+}
+
+model PaymentWebhookEvent {
+  id              String   @id @default(cuid())
+  provider        String
+  providerEventId String   @unique
+  payload         Json?
+  processedAt     DateTime @default(now())
 }

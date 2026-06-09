@@ -7,6 +7,8 @@ import uploadRoutes from "./modules/uploads/routes";
 import adminRoutes from "./modules/admin/routes";
 import conversationRoutes from "./modules/conversations/routes";
 import messageRoutes from "./modules/messages/routes";
+import verificationRoutes from "./modules/verification/routes";
+import paymentRoutes from "./modules/payments/routes";
 
 const router = Router();
 router.get("/health", (_req, res) => res.json({ success: true, data: { status: "ok" }, message: "Qwik API is running" }));
@@ -18,4 +20,6 @@ router.use("/uploads", uploadRoutes);
 router.use("/admin", adminRoutes);
 router.use("/conversations", conversationRoutes);
 router.use("/messages", messageRoutes);
+router.use("/verification", verificationRoutes);
+router.use("/payments", paymentRoutes);
 export default router;

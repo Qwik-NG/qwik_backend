@@ -2,6 +2,15 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.toAuthUser = toAuthUser;
 exports.toPublicUser = toPublicUser;
+function verificationSummary(user) {
+    const verification = user.verificationApplications?.[0] ?? null;
+    return {
+        id: verification?.id ?? null,
+        status: verification?.status ?? null,
+        paymentStatus: verification?.paymentStatus ?? null,
+        approved: verification?.status === "APPROVED",
+    };
+}
 function toAuthUser(user) {
     return {
         id: user.id,
@@ -14,6 +23,7 @@ function toAuthUser(user) {
             bio: user.profile?.bio ?? null,
             avatarUrl: user.profile?.avatarUrl ?? null,
         },
+        verification: verificationSummary(user),
     };
 }
 function toPublicUser(user) {
@@ -26,6 +36,7 @@ function toPublicUser(user) {
             bio: user.profile?.bio ?? null,
             avatarUrl: user.profile?.avatarUrl ?? null,
         },
+        verification: verificationSummary(user),
         createdAt: user.createdAt,
     };
 }

@@ -14,6 +14,11 @@ const sellerSelect = {
   role: true,
   createdAt: true,
   profile: true,
+  verificationApplications: {
+    orderBy: { createdAt: "desc" as const },
+    take: 1,
+    select: { id: true, status: true, paymentStatus: true },
+  },
 };
 
 const adInclude = {
@@ -316,6 +321,50 @@ router.delete("/:id/save", requireAuth, async (req, res, next) => {
       where: { userId: req.auth!.userId, adId: id },
     });
     res.json({ success: true, message: "Ad removed from saved" });
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.post("/:id/promotions", requireAuth, async (req, res, next) => {
+  try {
+    const id = String(req.params.id);
+    const ad = await prisma.ad.findUnique({ where: { id }, select: { id: true, userId: true } });
+    if (!ad) return res.status(404).json({ success: false, message: "Ad not found" });
+    if (ad.userId !== req.auth!.userId) return res.status(403).json({ success: false, message: "Forbidden" });
+
+    const b = parseOrThrow(
+      z.object({
+        plan: z.enum(["top-7", "premium-30"]).default("top-7"),
+      }),
+      req.body,
+    );
+
+    const payment = await prisma.paymentTransaction.create({
+      data: {
+        userId: req.auth!.userId,
+        adId: id,
+        purpose: "AD_PROMOTION",
+        amount: b.plan === "premium-30" ? 430000 : 161250,
+        currency: "NGN",
+        status: "PENDING",
+        provider: "manual",
+        metadata: { plan: b.plan },
+      },
+    });
+
+    res.status(201).json({
+      success: true,
+      data: {
+        paymentId: payment.id,
+        checkoutUrl: payment.checkoutUrl,
+        amount: payment.amount,
+        currency: payment.currency,
+        status: payment.status,
+        providerReady: false,
+      },
+      message: "Promotion payment record created. Promotion activates after payment confirmation.",
+    });
   } catch (e) {
     next(e);
   }

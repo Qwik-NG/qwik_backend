@@ -16,11 +16,26 @@ const sellerSelect = {
     role: true,
     createdAt: true,
     profile: true,
+    verificationApplications: {
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        select: { id: true, status: true, paymentStatus: true },
+    },
 };
 const adInclude = { images: true, category: true, user: { select: sellerSelect } };
 router.get("/me", auth_1.requireAuth, async (req, res, next) => {
     try {
-        const user = await prisma_1.prisma.user.findUnique({ where: { id: req.auth.userId }, include: { profile: true } });
+        const user = await prisma_1.prisma.user.findUnique({
+            where: { id: req.auth.userId },
+            include: {
+                profile: true,
+                verificationApplications: {
+                    orderBy: { createdAt: "desc" },
+                    take: 1,
+                    select: { id: true, status: true, paymentStatus: true },
+                },
+            },
+        });
         if (!user)
             return res.status(404).json({ success: false, message: "User not found" });
         res.json({ success: true, data: (0, userResponse_1.toAuthUser)(user) });
@@ -65,7 +80,17 @@ catch (e) {
 } });
 router.get("/:id", async (req, res, next) => {
     try {
-        const user = await prisma_1.prisma.user.findUnique({ where: { id: String(req.params.id) }, include: { profile: true } });
+        const user = await prisma_1.prisma.user.findUnique({
+            where: { id: String(req.params.id) },
+            include: {
+                profile: true,
+                verificationApplications: {
+                    orderBy: { createdAt: "desc" },
+                    take: 1,
+                    select: { id: true, status: true, paymentStatus: true },
+                },
+            },
+        });
         if (!user)
             return res.status(404).json({ success: false, message: "User not found" });
         res.json({ success: true, data: (0, userResponse_1.toPublicUser)(user) });
