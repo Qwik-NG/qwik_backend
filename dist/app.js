@@ -12,6 +12,14 @@ const requestLogger_1 = require("./middleware/requestLogger");
 const errors_1 = require("./middleware/errors");
 const routes_1 = __importDefault(require("./routes"));
 exports.app = (0, express_1.default)();
+exports.app.disable("x-powered-by");
+exports.app.use((_req, res, next) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+    res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+    next();
+});
 exports.app.use((0, cors_1.default)({
     origin: (origin, callback) => {
         // Allow same-origin server checks, any local dev origin, and the configured frontend origin.
@@ -23,7 +31,10 @@ exports.app.use((0, cors_1.default)({
         else {
             callback(new Error('Not allowed by CORS'));
         }
-    }
+    },
+    methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    optionsSuccessStatus: 204,
 }));
 exports.app.use(express_1.default.json({ limit: "2mb" }));
 exports.app.use(requestLogger_1.requestLogger);

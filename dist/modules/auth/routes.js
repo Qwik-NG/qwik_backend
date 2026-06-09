@@ -59,6 +59,8 @@ router.post("/login", async (req, res, next) => {
         const user = await prisma_1.prisma.user.findUnique({ where: { email: b.email.toLowerCase() }, include: { profile: true } });
         if (!user || !(await bcrypt_1.default.compare(b.password, user.passwordHash)))
             return res.status(401).json({ success: false, message: "Invalid credentials" });
+        if (user.status === "BANNED")
+            return res.status(403).json({ success: false, message: "This account has been suspended" });
         const token = (0, jwt_1.signAuthToken)({ userId: user.id, email: user.email });
         res.json({ success: true, data: { token, user: (0, userResponse_1.toAuthUser)(user) } });
     }

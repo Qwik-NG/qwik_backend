@@ -19,6 +19,7 @@ function toAuthUser(user) {
         phone: user.phone,
         location: user.location,
         role: user.role,
+        status: user.status,
         termsAcceptedAt: user.termsAcceptedAt,
         privacyAcceptedAt: user.privacyAcceptedAt,
         termsVersion: user.termsVersion,
@@ -36,6 +37,7 @@ function toPublicUser(user) {
         fullName: user.fullName,
         location: user.location,
         role: user.role,
+        status: user.status,
         profile: {
             bio: user.profile?.bio ?? null,
             avatarUrl: user.profile?.avatarUrl ?? null,

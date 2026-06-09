@@ -1,206 +1,287 @@
-import { Router, Request, Response } from 'express';
-import { z } from 'zod';
-import { prisma } from '../../lib/prisma';
-import { requireAuth } from '../../middleware/auth';
-import { parseOrThrow } from '../../utils/validation';
+import { NextFunction, Request, Response, Router } from "express";
+import { Prisma } from "@prisma/client";
+import { z } from "zod";
+import { prisma } from "../../lib/prisma";
+import { requireAuth } from "../../middleware/auth";
+import { parseOrThrow } from "../../utils/validation";
 
 const router = Router();
 
-// Middleware to check if user is admin
-const requireAdmin = async (req: Request, res: Response, next: Function) => {
+const reportStatusSchema = z.object({
+  status: z.enum(["PENDING", "RESOLVED", "DISMISSED"]),
+});
+
+const verificationReviewSchema = z.object({
+  status: z.enum(["IN_REVIEW", "APPROVED", "REJECTED"]),
+  rejectionReason: z.string().trim().max(1000).optional(),
+});
+
+const banUserSchema = z.object({
+  reason: z.string().trim().min(3).max(500).optional(),
+});
+
+const pageQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(50),
+});
+
+const safeAdminUserSelect = {
+  id: true,
+  email: true,
+  fullName: true,
+  phone: true,
+  location: true,
+  role: true,
+  status: true,
+  bannedAt: true,
+  banReason: true,
+  createdAt: true,
+  updatedAt: true,
+  profile: {
+    select: { bio: true, avatarUrl: true },
+  },
+  _count: {
+    select: { ads: true, reviews: true },
+  },
+} satisfies Prisma.UserSelect;
+
+function getPage(req: Request) {
+  const parsed = pageQuerySchema.parse(req.query);
+  return {
+    page: parsed.page,
+    pageSize: parsed.pageSize,
+    skip: (parsed.page - 1) * parsed.pageSize,
+  };
+}
+
+async function auditAdminAction(req: Request, action: string, targetType: string, targetId?: string, metadata?: Prisma.InputJsonValue) {
+  if (!req.auth?.userId) return;
+
+  await prisma.adminAuditLog.create({
+    data: {
+      adminId: req.auth.userId,
+      action,
+      targetType,
+      targetId,
+      metadata,
+    },
+  });
+}
+
+function notFound(res: Response, message: string) {
+  return res.status(404).json({ success: false, message });
+}
+
+const requireAdmin = async (req: Request, res: Response, next: NextFunction) => {
   try {
     if (!req.auth) {
-      return res.status(401).json({ success: false, message: 'Unauthorized' });
+      return res.status(401).json({ success: false, message: "Unauthorized" });
     }
 
     const user = await prisma.user.findUnique({
       where: { id: req.auth.userId },
+      select: { id: true, role: true, status: true },
     });
 
-    if (!user || user.role !== 'ADMIN') {
-      return res.status(403).json({ success: false, message: 'Admin access required' });
+    if (!user || user.role !== "ADMIN" || user.status === "BANNED") {
+      return res.status(403).json({ success: false, message: "Admin access required" });
     }
 
     next();
-  } catch (error) {
-    res.status(500).json({ success: false, message: 'Internal server error' });
+  } catch {
+    res.status(500).json({ success: false, message: "Failed to verify admin access" });
   }
 };
 
-// Apply auth middleware to all admin routes
 router.use(requireAuth);
 router.use(requireAdmin);
 
-// Get dashboard stats
-router.get('/stats', async (req: Request, res: Response) => {
+router.get("/stats", async (_req: Request, res: Response) => {
   try {
-    const totalUsers = await prisma.user.count();
-    const totalAds = await prisma.ad.count();
-    const totalReports = await prisma.report.count();
-    const pendingReports = await prisma.report.count({
-      where: { status: 'PENDING' },
-    });
+    const [totalUsers, bannedUsers, totalAds, totalReports, pendingReports, pendingVerifications] = await prisma.$transaction([
+      prisma.user.count(),
+      prisma.user.count({ where: { status: "BANNED" } }),
+      prisma.ad.count(),
+      prisma.report.count(),
+      prisma.report.count({ where: { status: "PENDING" } }),
+      prisma.verificationApplication.count({ where: { status: { in: ["SUBMITTED", "IN_REVIEW"] } } }),
+    ]);
 
     res.json({
       success: true,
       data: {
         totalUsers,
+        bannedUsers,
         totalAds,
         totalReports,
         pendingReports,
+        pendingVerifications,
       },
     });
-  } catch (error) {
-    res.status(500).json({ success: false, message: 'Failed to fetch stats' });
+  } catch {
+    res.status(500).json({ success: false, message: "Failed to fetch admin stats" });
   }
 });
 
-// Get all users
-router.get('/users', async (req: Request, res: Response) => {
+router.get("/users", async (req: Request, res: Response) => {
   try {
-    const users = await prisma.user.findMany({
-      select: {
-        id: true,
-        email: true,
-        fullName: true,
-        phone: true,
-        location: true,
-        role: true,
-        createdAt: true,
-        _count: {
-          select: { ads: true, reviews: true },
-        },
-      },
-      orderBy: { createdAt: 'desc' },
-      take: 100,
-    });
+    const { page, pageSize, skip } = getPage(req);
+    const [users, total] = await prisma.$transaction([
+      prisma.user.findMany({
+        select: safeAdminUserSelect,
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: pageSize,
+      }),
+      prisma.user.count(),
+    ]);
 
-    res.json({ success: true, data: users });
-  } catch (error) {
-    res.status(500).json({ success: false, message: 'Failed to fetch users' });
+    res.json({ success: true, data: users, meta: { page, pageSize, total } });
+  } catch {
+    res.status(500).json({ success: false, message: "Failed to fetch users" });
   }
 });
 
-// Get all ads
-router.get('/ads', async (req: Request, res: Response) => {
+router.get("/ads", async (req: Request, res: Response) => {
   try {
-    const ads = await prisma.ad.findMany({
-      include: {
-        user: {
-          select: { id: true, fullName: true, email: true },
+    const { page, pageSize, skip } = getPage(req);
+    const [ads, total] = await prisma.$transaction([
+      prisma.ad.findMany({
+        include: {
+          user: {
+            select: { id: true, fullName: true, email: true, status: true },
+          },
+          category: true,
+          _count: {
+            select: { images: true, reviews: true, reports: true },
+          },
         },
-        category: true,
-        _count: {
-          select: { images: true, reviews: true, reports: true },
-        },
-      },
-      orderBy: { createdAt: 'desc' },
-      take: 100,
-    });
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: pageSize,
+      }),
+      prisma.ad.count(),
+    ]);
 
-    res.json({ success: true, data: ads });
-  } catch (error) {
-    res.status(500).json({ success: false, message: 'Failed to fetch ads' });
+    res.json({ success: true, data: ads, meta: { page, pageSize, total } });
+  } catch {
+    res.status(500).json({ success: false, message: "Failed to fetch ads" });
   }
 });
 
-// Get all reports
-router.get('/reports', async (req: Request, res: Response) => {
+router.get("/reports", async (req: Request, res: Response) => {
   try {
-    const reports = await prisma.report.findMany({
-      include: {
-        ad: {
-          select: { id: true, title: true },
+    const { page, pageSize, skip } = getPage(req);
+    const [reports, total] = await prisma.$transaction([
+      prisma.report.findMany({
+        include: {
+          ad: {
+            select: { id: true, title: true },
+          },
+          user: {
+            select: { id: true, fullName: true, email: true },
+          },
         },
-        user: {
-          select: { id: true, fullName: true, email: true },
-        },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: pageSize,
+      }),
+      prisma.report.count(),
+    ]);
 
-    res.json({ success: true, data: reports });
-  } catch (error) {
-    res.status(500).json({ success: false, message: 'Failed to fetch reports' });
+    res.json({ success: true, data: reports, meta: { page, pageSize, total } });
+  } catch {
+    res.status(500).json({ success: false, message: "Failed to fetch reports" });
   }
 });
 
-// Update report status
-router.patch('/reports/:id', async (req: Request, res: Response) => {
+router.patch("/reports/:id", async (req: Request, res: Response) => {
   try {
     const id = String(req.params.id);
-    const { status } = req.body;
-
-    if (!['PENDING', 'RESOLVED', 'DISMISSED'].includes(status)) {
-      return res.status(400).json({ success: false, message: 'Invalid status' });
-    }
+    const body = parseOrThrow(reportStatusSchema, req.body);
+    const existing = await prisma.report.findUnique({ where: { id }, select: { id: true, status: true } });
+    if (!existing) return notFound(res, "Report not found");
 
     const report = await prisma.report.update({
       where: { id },
-      data: { status },
+      data: { status: body.status },
+      include: {
+        ad: { select: { id: true, title: true } },
+        user: { select: { id: true, fullName: true, email: true } },
+      },
     });
 
-    res.json({ success: true, data: report });
+    await auditAdminAction(req, "REPORT_STATUS_UPDATED", "Report", id, {
+      previousStatus: existing.status,
+      status: body.status,
+    });
+
+    res.json({ success: true, data: report, message: "Report updated" });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Failed to update report' });
+    const message = error instanceof Error ? error.message : "Failed to update report";
+    res.status(message.includes("Invalid") ? 400 : 500).json({ success: false, message });
   }
 });
 
-// Get verification applications for admin review
-router.get('/verifications', async (req: Request, res: Response) => {
+router.get("/verifications", async (req: Request, res: Response) => {
   try {
-    const status = String(req.query.status ?? '').trim();
-    const verifications = await prisma.verificationApplication.findMany({
-      where: status ? { status: status as any } : {},
-      include: {
-        user: {
-          select: {
-            id: true,
-            email: true,
-            fullName: true,
-            phone: true,
-            location: true,
-            profile: true,
+    const { page, pageSize, skip } = getPage(req);
+    const status = String(req.query.status ?? "").trim();
+    const where = status ? { status: status as any } : {};
+
+    const [verifications, total] = await prisma.$transaction([
+      prisma.verificationApplication.findMany({
+        where,
+        include: {
+          user: {
+            select: {
+              id: true,
+              email: true,
+              fullName: true,
+              phone: true,
+              location: true,
+              role: true,
+              status: true,
+              profile: true,
+            },
+          },
+          documents: { orderBy: { createdAt: "desc" } },
+          payments: { orderBy: { createdAt: "desc" }, take: 5 },
+          reviewer: {
+            select: { id: true, fullName: true, email: true },
           },
         },
-        documents: { orderBy: { createdAt: 'desc' } },
-        payments: { orderBy: { createdAt: 'desc' }, take: 5 },
-        reviewer: {
-          select: { id: true, fullName: true, email: true },
-        },
-      },
-      orderBy: { updatedAt: 'desc' },
-      take: 100,
-    });
+        orderBy: { updatedAt: "desc" },
+        skip,
+        take: pageSize,
+      }),
+      prisma.verificationApplication.count({ where }),
+    ]);
 
-    res.json({ success: true, data: verifications });
-  } catch (error) {
-    res.status(500).json({ success: false, message: 'Failed to fetch verifications' });
+    res.json({ success: true, data: verifications, meta: { page, pageSize, total } });
+  } catch {
+    res.status(500).json({ success: false, message: "Failed to fetch verifications" });
   }
 });
 
-// Review verification application
-router.patch('/verifications/:id', async (req: Request, res: Response) => {
+router.patch("/verifications/:id", async (req: Request, res: Response) => {
   try {
     const id = String(req.params.id);
-    const body = parseOrThrow(
-      z.object({
-        status: z.enum(['IN_REVIEW', 'APPROVED', 'REJECTED']),
-        rejectionReason: z.string().optional(),
-      }),
-      req.body,
-    );
+    const body = parseOrThrow(verificationReviewSchema, req.body);
 
-    if (body.status === 'REJECTED' && !body.rejectionReason?.trim()) {
-      return res.status(400).json({ success: false, message: 'Rejection reason is required' });
+    if (body.status === "REJECTED" && !body.rejectionReason?.trim()) {
+      return res.status(400).json({ success: false, message: "Rejection reason is required" });
     }
+
+    const existing = await prisma.verificationApplication.findUnique({ where: { id }, select: { id: true, status: true } });
+    if (!existing) return notFound(res, "Verification application not found");
 
     const verification = await prisma.verificationApplication.update({
       where: { id },
       data: {
         status: body.status,
-        rejectionReason: body.status === 'REJECTED' ? body.rejectionReason : null,
-        reviewedAt: body.status === 'APPROVED' || body.status === 'REJECTED' ? new Date() : null,
+        rejectionReason: body.status === "REJECTED" ? body.rejectionReason : null,
+        reviewedAt: body.status === "APPROVED" || body.status === "REJECTED" ? new Date() : null,
         reviewerId: req.auth!.userId,
       },
       include: {
@@ -211,50 +292,115 @@ router.patch('/verifications/:id', async (req: Request, res: Response) => {
             fullName: true,
             phone: true,
             location: true,
+            role: true,
+            status: true,
             profile: true,
           },
         },
         documents: true,
-        payments: { orderBy: { createdAt: 'desc' }, take: 5 },
+        payments: { orderBy: { createdAt: "desc" }, take: 5 },
       },
     });
 
-    res.json({ success: true, data: verification, message: 'Verification updated' });
-  } catch (error) {
-    res.status(500).json({ success: false, message: 'Failed to update verification' });
-  }
-});
-
-// Delete ad (mod action)
-router.delete('/ads/:id', async (req: Request, res: Response) => {
-  try {
-    const id = String(req.params.id);
-
-    await prisma.ad.delete({
-      where: { id },
+    await auditAdminAction(req, "VERIFICATION_REVIEWED", "VerificationApplication", id, {
+      previousStatus: existing.status,
+      status: body.status,
     });
 
-    res.json({ success: true, message: 'Ad deleted successfully' });
+    res.json({ success: true, data: verification, message: "Verification updated" });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Failed to delete ad' });
+    const message = error instanceof Error ? error.message : "Failed to update verification";
+    res.status(message.includes("Invalid") ? 400 : 500).json({ success: false, message });
   }
 });
 
-// Ban user
-router.post('/users/:id/ban', async (req: Request, res: Response) => {
+router.delete("/ads/:id", async (req: Request, res: Response) => {
   try {
     const id = String(req.params.id);
+    const existing = await prisma.ad.findUnique({ where: { id }, select: { id: true, title: true, userId: true } });
+    if (!existing) return notFound(res, "Ad not found");
 
-    // Instead of deleting, you could add a banned field. For now, we'll mark the email as disabled
-    // This is a simple implementation - in production you'd add a banned/disabled field to User model
+    await prisma.ad.delete({ where: { id } });
+    await auditAdminAction(req, "AD_DELETED", "Ad", id, {
+      title: existing.title,
+      userId: existing.userId,
+    });
+
+    res.json({ success: true, data: null, message: "Ad deleted successfully" });
+  } catch {
+    res.status(500).json({ success: false, message: "Failed to delete ad" });
+  }
+});
+
+router.post("/users/:id/ban", async (req: Request, res: Response) => {
+  try {
+    const id = String(req.params.id);
+    if (id === req.auth?.userId) {
+      return res.status(400).json({ success: false, message: "Admins cannot ban their own account" });
+    }
+
+    const body = parseOrThrow(banUserSchema, req.body ?? {});
+    const existing = await prisma.user.findUnique({ where: { id }, select: { id: true, role: true, status: true } });
+    if (!existing) return notFound(res, "User not found");
+    if (existing.role === "ADMIN") return res.status(400).json({ success: false, message: "Admin accounts cannot be banned here" });
+
     const user = await prisma.user.update({
       where: { id },
-      data: { email: `${id}-banned@banned.local` },
+      data: {
+        status: "BANNED",
+        bannedAt: new Date(),
+        banReason: body.reason ?? "Policy violation",
+      },
+      select: safeAdminUserSelect,
     });
 
-    res.json({ success: true, message: 'User banned successfully', data: user });
+    await auditAdminAction(req, "USER_BANNED", "User", id, { reason: user.banReason });
+    res.json({ success: true, message: "User banned successfully", data: user });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Failed to ban user' });
+    const message = error instanceof Error ? error.message : "Failed to ban user";
+    res.status(message.includes("Invalid") ? 400 : 500).json({ success: false, message });
+  }
+});
+
+router.post("/users/:id/unban", async (req: Request, res: Response) => {
+  try {
+    const id = String(req.params.id);
+    const existing = await prisma.user.findUnique({ where: { id }, select: { id: true, status: true } });
+    if (!existing) return notFound(res, "User not found");
+
+    const user = await prisma.user.update({
+      where: { id },
+      data: { status: "ACTIVE", bannedAt: null, banReason: null },
+      select: safeAdminUserSelect,
+    });
+
+    await auditAdminAction(req, "USER_UNBANNED", "User", id);
+    res.json({ success: true, message: "User restored successfully", data: user });
+  } catch {
+    res.status(500).json({ success: false, message: "Failed to restore user" });
+  }
+});
+
+router.get("/audit-log", async (req: Request, res: Response) => {
+  try {
+    const { page, pageSize, skip } = getPage(req);
+    const [logs, total] = await prisma.$transaction([
+      prisma.adminAuditLog.findMany({
+        include: {
+          admin: {
+            select: { id: true, fullName: true, email: true },
+          },
+        },
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: pageSize,
+      }),
+      prisma.adminAuditLog.count(),
+    ]);
+
+    res.json({ success: true, data: logs, meta: { page, pageSize, total } });
+  } catch {
+    res.status(500).json({ success: false, message: "Failed to fetch audit log" });
   }
 });
 
