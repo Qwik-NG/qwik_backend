@@ -34,8 +34,22 @@ const upload = (0, multer_1.default)({
         cb(null, true);
     },
 });
-function isUploadError(err) {
-    return err instanceof multer_1.default.MulterError || (typeof err === "object" && err !== null && ("code" in err || "message" in err));
+function getUploadErrorCode(err) {
+    if (typeof err !== "object" || err === null || !("code" in err)) {
+        return undefined;
+    }
+    const code = err.code;
+    return typeof code === "string" ? code : undefined;
+}
+function getUploadErrorMessage(err) {
+    if (err instanceof Error) {
+        return err.message;
+    }
+    if (typeof err !== "object" || err === null || !("message" in err)) {
+        return undefined;
+    }
+    const message = err.message;
+    return typeof message === "string" ? message : undefined;
 }
 function getFiles(req) {
     return (req.files ?? []);
@@ -63,22 +77,19 @@ async function saveLocalUpload(file, folder) {
     };
 }
 function normalizeUploadError(err, _req, res, next) {
-    if (isUploadError(err)) {
-        if (err.code === "LIMIT_FILE_SIZE") {
-            return res.status(400).json({ success: false, message: "Each file must be 5MB or smaller" });
-        }
-        if (err.code === "LIMIT_FILE_COUNT") {
-            return res.status(400).json({ success: false, message: "You can upload up to 10 files at a time" });
-        }
-        if (err.message?.includes("unsupported file type")) {
-            return res.status(400).json({ success: false, message: err.message });
-        }
-        if (err instanceof multer_1.default.MulterError) {
-            return res.status(400).json({ success: false, message: err.message || "Upload failed" });
-        }
+    const code = getUploadErrorCode(err);
+    const message = getUploadErrorMessage(err);
+    if (code === "LIMIT_FILE_SIZE") {
+        return res.status(400).json({ success: false, message: "Each file must be 5MB or smaller" });
     }
-    if (err instanceof Error && err.message.includes("unsupported file type")) {
-        return res.status(400).json({ success: false, message: err.message });
+    if (code === "LIMIT_FILE_COUNT") {
+        return res.status(400).json({ success: false, message: "You can upload up to 10 files at a time" });
+    }
+    if (message?.includes("unsupported file type")) {
+        return res.status(400).json({ success: false, message });
+    }
+    if (err instanceof multer_1.default.MulterError) {
+        return res.status(400).json({ success: false, message: message || "Upload failed" });
     }
     next(err);
 }
