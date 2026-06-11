@@ -2,7 +2,7 @@ import crypto from "crypto";
 import path from "path";
 import { mkdir, writeFile } from "fs/promises";
 import { Router, type NextFunction, type Request, type Response } from "express";
-import multer, { MulterError } from "multer";
+import multer from "multer";
 import { env } from "../../config/env";
 import { isCloudinaryEnabled, uploadBuffer, uploadImageBuffer } from "../../lib/cloudinary";
 import { requireAuth } from "../../middleware/auth";
@@ -48,6 +48,15 @@ type UploadedFile = {
   size: number;
 };
 
+type UploadError = {
+  code?: string;
+  message?: string;
+};
+
+function isUploadError(err: unknown): err is UploadError {
+  return err instanceof multer.MulterError || (typeof err === "object" && err !== null && ("code" in err || "message" in err));
+}
+
 function getFiles(req: Request) {
   return (req.files ?? []) as UploadedFile[];
 }
@@ -78,14 +87,19 @@ async function saveLocalUpload(file: UploadedFile, folder: "images" | "documents
 }
 
 function normalizeUploadError(err: unknown, _req: Request, res: Response, next: NextFunction) {
-  if (err instanceof MulterError) {
+  if (isUploadError(err)) {
     if (err.code === "LIMIT_FILE_SIZE") {
       return res.status(400).json({ success: false, message: "Each file must be 5MB or smaller" });
     }
     if (err.code === "LIMIT_FILE_COUNT") {
       return res.status(400).json({ success: false, message: "You can upload up to 10 files at a time" });
     }
-    return res.status(400).json({ success: false, message: err.message });
+    if (err.message?.includes("unsupported file type")) {
+      return res.status(400).json({ success: false, message: err.message });
+    }
+    if (err instanceof multer.MulterError) {
+      return res.status(400).json({ success: false, message: err.message || "Upload failed" });
+    }
   }
 
   if (err instanceof Error && err.message.includes("unsupported file type")) {

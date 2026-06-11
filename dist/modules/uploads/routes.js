@@ -1,37 +1,4 @@
 "use strict";
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -40,7 +7,7 @@ const crypto_1 = __importDefault(require("crypto"));
 const path_1 = __importDefault(require("path"));
 const promises_1 = require("fs/promises");
 const express_1 = require("express");
-const multer_1 = __importStar(require("multer"));
+const multer_1 = __importDefault(require("multer"));
 const env_1 = require("../../config/env");
 const cloudinary_1 = require("../../lib/cloudinary");
 const auth_1 = require("../../middleware/auth");
@@ -67,6 +34,9 @@ const upload = (0, multer_1.default)({
         cb(null, true);
     },
 });
+function isUploadError(err) {
+    return err instanceof multer_1.default.MulterError || (typeof err === "object" && err !== null && ("code" in err || "message" in err));
+}
 function getFiles(req) {
     return (req.files ?? []);
 }
@@ -93,14 +63,19 @@ async function saveLocalUpload(file, folder) {
     };
 }
 function normalizeUploadError(err, _req, res, next) {
-    if (err instanceof multer_1.MulterError) {
+    if (isUploadError(err)) {
         if (err.code === "LIMIT_FILE_SIZE") {
             return res.status(400).json({ success: false, message: "Each file must be 5MB or smaller" });
         }
         if (err.code === "LIMIT_FILE_COUNT") {
             return res.status(400).json({ success: false, message: "You can upload up to 10 files at a time" });
         }
-        return res.status(400).json({ success: false, message: err.message });
+        if (err.message?.includes("unsupported file type")) {
+            return res.status(400).json({ success: false, message: err.message });
+        }
+        if (err instanceof multer_1.default.MulterError) {
+            return res.status(400).json({ success: false, message: err.message || "Upload failed" });
+        }
     }
     if (err instanceof Error && err.message.includes("unsupported file type")) {
         return res.status(400).json({ success: false, message: err.message });
