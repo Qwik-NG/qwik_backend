@@ -41,11 +41,18 @@ type UploadedAsset = {
   size: number;
 };
 
+type UploadedFile = {
+  buffer: Buffer;
+  originalname: string;
+  mimetype: string;
+  size: number;
+};
+
 function getFiles(req: Request) {
-  return (req.files ?? []) as Express.Multer.File[];
+  return (req.files ?? []) as UploadedFile[];
 }
 
-function rejectInvalidFiles(files: Express.Multer.File[], allowedTypes: Set<string>) {
+function rejectInvalidFiles(files: UploadedFile[], allowedTypes: Set<string>) {
   const invalid = files.find((file) => !allowedTypes.has(file.mimetype));
   if (invalid) {
     return `${invalid.originalname} has an unsupported file type`;
@@ -53,12 +60,12 @@ function rejectInvalidFiles(files: Express.Multer.File[], allowedTypes: Set<stri
   return null;
 }
 
-function fileExtension(file: Express.Multer.File) {
+function fileExtension(file: UploadedFile) {
   const fallback = file.mimetype.split("/")[1] || "bin";
   return path.extname(file.originalname).replace(".", "") || fallback;
 }
 
-async function saveLocalUpload(file: Express.Multer.File, folder: "images" | "documents") {
+async function saveLocalUpload(file: UploadedFile, folder: "images" | "documents") {
   const uploadDir = path.resolve("uploads", folder);
   await mkdir(uploadDir, { recursive: true });
   const id = crypto.randomUUID();
