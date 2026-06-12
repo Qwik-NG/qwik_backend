@@ -15,6 +15,26 @@ const userResponse_1 = require("../../utils/userResponse");
 const router = (0, express_1.Router)();
 const TERMS_VERSION = "2026-06-09";
 const PRIVACY_VERSION = "2026-06-09";
+const authUserSelect = {
+    id: true,
+    email: true,
+    fullName: true,
+    phone: true,
+    location: true,
+    role: true,
+    status: true,
+    termsAcceptedAt: true,
+    privacyAcceptedAt: true,
+    termsVersion: true,
+    privacyVersion: true,
+    createdAt: true,
+    profile: { select: { bio: true, avatarUrl: true } },
+    verificationApplications: {
+        select: { id: true, status: true, paymentStatus: true },
+        orderBy: { createdAt: "desc" },
+        take: 1,
+    },
+};
 router.post("/register", async (req, res, next) => {
     try {
         const b = (0, validation_1.parseOrThrow)(zod_1.z.object({
@@ -44,7 +64,7 @@ router.post("/register", async (req, res, next) => {
                 privacyVersion: PRIVACY_VERSION,
                 profile: { create: {} },
             },
-            include: { profile: true },
+            select: authUserSelect,
         });
         const token = (0, jwt_1.signAuthToken)({ userId: user.id, email: user.email });
         res.status(201).json({ success: true, data: { token, user: (0, userResponse_1.toAuthUser)(user) } });
@@ -56,9 +76,13 @@ router.post("/register", async (req, res, next) => {
 router.post("/login", async (req, res, next) => {
     try {
         const b = (0, validation_1.parseOrThrow)(zod_1.z.object({ email: zod_1.z.string().email(), password: zod_1.z.string().min(6) }), req.body);
-        const user = await prisma_1.prisma.user.findUnique({ where: { email: b.email.toLowerCase() }, include: { profile: true } });
-        if (!user || !(await bcrypt_1.default.compare(b.password, user.passwordHash)))
+        const user = await prisma_1.prisma.user.findUnique({
+            where: { email: b.email.toLowerCase() },
+            select: { ...authUserSelect, passwordHash: true },
+        });
+        if (!user || typeof user.passwordHash !== "string" || !user.passwordHash || !(await bcrypt_1.default.compare(b.password, user.passwordHash))) {
             return res.status(401).json({ success: false, message: "Invalid credentials" });
+        }
         if (user.status === "BANNED")
             return res.status(403).json({ success: false, message: "This account has been suspended" });
         const token = (0, jwt_1.signAuthToken)({ userId: user.id, email: user.email });
@@ -97,7 +121,7 @@ router.post("/reset-password", async (req, res, next) => {
 });
 router.get("/me", auth_1.requireAuth, async (req, res, next) => {
     try {
-        const user = await prisma_1.prisma.user.findUnique({ where: { id: req.auth.userId }, include: { profile: true } });
+        const user = await prisma_1.prisma.user.findUnique({ where: { id: req.auth.userId }, select: authUserSelect });
         if (!user)
             return res.status(404).json({ success: false, message: "User not found" });
         res.json({ success: true, data: (0, userResponse_1.toAuthUser)(user) });

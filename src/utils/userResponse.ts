@@ -1,8 +1,25 @@
 import type { User, UserProfile } from "@prisma/client";
 
-type UserWithProfile = User & { profile?: UserProfile | null };
+type UserResponseSource = Pick<
+  User,
+  | "id"
+  | "email"
+  | "fullName"
+  | "phone"
+  | "location"
+  | "role"
+  | "status"
+  | "termsAcceptedAt"
+  | "privacyAcceptedAt"
+  | "termsVersion"
+  | "privacyVersion"
+  | "createdAt"
+> & {
+  profile?: Pick<UserProfile, "bio" | "avatarUrl"> | null;
+  verificationApplications?: Array<{ id: string; status: string; paymentStatus: string }>;
+};
 
-function verificationSummary(user: UserWithProfile & { verificationApplications?: Array<{ id: string; status: string; paymentStatus: string }> }) {
+function verificationSummary(user: UserResponseSource) {
   const verification = user.verificationApplications?.[0] ?? null;
   return {
     id: verification?.id ?? null,
@@ -12,7 +29,7 @@ function verificationSummary(user: UserWithProfile & { verificationApplications?
   };
 }
 
-export function toAuthUser(user: UserWithProfile) {
+export function toAuthUser(user: UserResponseSource) {
   return {
     id: user.id,
     email: user.email,
@@ -33,7 +50,7 @@ export function toAuthUser(user: UserWithProfile) {
   };
 }
 
-export function toPublicUser(user: UserWithProfile) {
+export function toPublicUser(user: UserResponseSource) {
   return {
     id: user.id,
     fullName: user.fullName,
