@@ -30,16 +30,23 @@ router.post("/", auth_1.requireAuth, async (req, res, next) => {
         const body = (0, validation_1.parseOrThrow)(zod_1.z.object({
             conversationId: zod_1.z.string().min(1),
             text: zod_1.z.string().min(1),
+            clientId: zod_1.z.string().min(1).max(100).optional(),
         }), req.body);
-        const participant = await prisma_1.prisma.conversationParticipant.findUnique({
+        const conversation = await prisma_1.prisma.conversation.findFirst({
             where: {
-                conversationId_userId: {
-                    conversationId: body.conversationId,
-                    userId: currentUserId,
+                id: body.conversationId,
+                participants: {
+                    some: {
+                        userId: currentUserId,
+                    },
                 },
             },
+            select: {
+                ad: { select: { title: true } },
+                participants: { select: { userId: true } },
+            },
         });
-        if (!participant) {
+        if (!conversation) {
             return res.status(403).json({ success: false, message: "Forbidden" });
         }
         const message = await prisma_1.prisma.message.create({
@@ -54,18 +61,17 @@ router.post("/", auth_1.requireAuth, async (req, res, next) => {
                 },
             },
         });
-        const conversation = await prisma_1.prisma.conversation.update({
-            where: { id: body.conversationId },
-            include: {
-                ad: { select: { title: true } },
-                participants: {
-                    select: { userId: true },
-                },
-            },
-            data: { updatedAt: new Date() },
-        });
         const participantIds = conversation.participants.map((participant) => participant.userId);
         const recipientIds = participantIds.filter((userId) => userId !== currentUserId);
+        const responseMessage = body.clientId ? { ...message, clientId: body.clientId } : message;
+        void prisma_1.prisma.conversation
+            .update({
+            where: { id: body.conversationId },
+            data: { updatedAt: new Date() },
+        })
+            .catch((updateError) => {
+            console.error("Failed to update conversation timestamp", updateError);
+        });
         void Promise.all(recipientIds.map(async (recipientId) => {
             try {
                 const notification = await (0, notifications_1.createMessageNotification)({
@@ -81,12 +87,12 @@ router.post("/", auth_1.requireAuth, async (req, res, next) => {
                 console.error("Failed to create message notification", notificationError);
             }
         }));
-        (0, realtime_1.emitMessageNew)(body.conversationId, message, recipientIds);
+        (0, realtime_1.emitMessageNew)(body.conversationId, responseMessage, recipientIds);
         (0, realtime_1.emitConversationUpdated)(body.conversationId, {
-            lastMessage: message,
+            lastMessage: responseMessage,
             lastMessageAt: message.createdAt,
         }, participantIds);
-        res.status(201).json({ success: true, data: message });
+        res.status(201).json({ success: true, data: responseMessage });
     }
     catch (e) {
         next(e);

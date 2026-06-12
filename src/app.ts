@@ -7,6 +7,11 @@ import { errorHandler, notFound } from "./middleware/errors";
 import router from "./routes";
 
 export const app = express();
+const frontendOrigins = env.frontendUrl
+  .split(",")
+  .map((origin) => origin.trim().replace(/\/$/, ""))
+  .filter(Boolean);
+
 app.disable("x-powered-by");
 app.use((_req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
@@ -21,7 +26,7 @@ app.use(cors({
     if (
       !origin ||
       /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin) ||
-      origin === env.frontendUrl
+      frontendOrigins.includes(origin.replace(/\/$/, ""))
     ) {
       callback(null, true);
     } else {

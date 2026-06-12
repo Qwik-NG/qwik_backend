@@ -11,11 +11,22 @@ function isLocalOrigin(origin?: string) {
   return !origin || /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin);
 }
 
+function allowedFrontendOrigins() {
+  return env.frontendUrl
+    .split(",")
+    .map((origin) => origin.trim().replace(/\/$/, ""))
+    .filter(Boolean);
+}
+
+function isAllowedOrigin(origin?: string) {
+  return isLocalOrigin(origin) || allowedFrontendOrigins().includes(origin?.replace(/\/$/, "") ?? "");
+}
+
 export function initRealtime(server: HttpServer) {
   io = new Server(server, {
     cors: {
       origin: (origin, callback) => {
-        if (isLocalOrigin(origin) || origin === env.frontendUrl) {
+        if (isAllowedOrigin(origin)) {
           callback(null, true);
           return;
         }
@@ -38,6 +49,9 @@ export function initRealtime(server: HttpServer) {
       socket.data.email = auth.email;
       next();
     } catch {
+      if (process.env.NODE_ENV !== "production") {
+        console.warn("Socket authentication failed");
+      }
       next(new Error("Unauthorized"));
     }
   });
@@ -47,6 +61,9 @@ export function initRealtime(server: HttpServer) {
     if (!userId) return;
 
     void socket.join(userRoom(userId));
+    if (process.env.NODE_ENV !== "production") {
+      console.log(`Socket connected for user ${userId}`);
+    }
 
     socket.on("conversation:join", async (conversationId: string, ack?: (response: { success: boolean; message?: string }) => void) => {
       try {
@@ -72,7 +89,10 @@ export function initRealtime(server: HttpServer) {
 
         await socket.join(conversationRoom(conversationId));
         ack?.({ success: true });
-      } catch {
+      } catch (error) {
+        if (process.env.NODE_ENV !== "production") {
+          console.warn("Socket conversation join failed", error);
+        }
         ack?.({ success: false, message: "Unable to join conversation" });
       }
     });
@@ -91,10 +111,8 @@ function conversationRoom(conversationId: string) {
 
 export function emitMessageNew(conversationId: string, message: unknown, recipientIds: string[]) {
   if (!io) return;
-  io.to(conversationRoom(conversationId)).emit("message:new", { conversationId, message });
-  recipientIds.forEach((recipientId) => {
-    io?.to(userRoom(recipientId)).emit("message:new", { conversationId, message });
-  });
+  const rooms = [conversationRoom(conversationId), ...recipientIds.map(userRoom)];
+  io.to(rooms).emit("message:new", { conversationId, message });
 }
 
 type ConversationUpdatedPayload = {

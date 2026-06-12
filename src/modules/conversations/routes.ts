@@ -112,10 +112,19 @@ router.get("/", requireAuth, async (req, res, next) => {
       },
       include: {
         ...conversationInclude,
-        messages: {
-          orderBy: {
-            createdAt: "asc",
+        _count: {
+          select: {
+            messages: {
+              where: {
+                senderId: { not: currentUserId },
+                readAt: null,
+              },
+            },
           },
+        },
+        messages: {
+          orderBy: { createdAt: "desc" },
+          take: 1,
           include: messageInclude,
         },
       },
@@ -123,7 +132,16 @@ router.get("/", requireAuth, async (req, res, next) => {
 
     res.json({
       success: true,
-      data: conversations.map((conversation) => serializeConversation(conversation, currentUserId)),
+      data: conversations.map((conversation) => ({
+        ...serializeConversation(
+          {
+            ...conversation,
+            messages: [...conversation.messages].reverse(),
+          },
+          currentUserId,
+        ),
+        unreadCount: conversation._count.messages,
+      })),
     });
   } catch (e) {
     next(e);
@@ -167,6 +185,7 @@ router.post("/", requireAuth, async (req, res, next) => {
         recipientId: z.string().min(1),
         message: z.string().min(1),
         adId: z.string().min(1).optional(),
+        clientId: z.string().min(1).max(100).optional(),
       }),
       req.body,
     );
@@ -241,6 +260,7 @@ router.post("/", requireAuth, async (req, res, next) => {
       },
       data: { updatedAt: new Date() },
     });
+    const responseMessage = body.clientId ? { ...message, clientId: body.clientId } : message;
 
     void createMessageNotification({
       recipientId: body.recipientId,
@@ -256,11 +276,11 @@ router.post("/", requireAuth, async (req, res, next) => {
       });
 
     const participantIds = updatedConversation.participants.map((participant) => participant.userId);
-    emitMessageNew(conversationId, message, [body.recipientId]);
+    emitMessageNew(conversationId, responseMessage, [body.recipientId]);
     emitConversationUpdated(
       conversationId,
       {
-        lastMessage: message,
+        lastMessage: responseMessage,
         lastMessageAt: message.createdAt,
       },
       participantIds,

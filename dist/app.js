@@ -12,6 +12,10 @@ const requestLogger_1 = require("./middleware/requestLogger");
 const errors_1 = require("./middleware/errors");
 const routes_1 = __importDefault(require("./routes"));
 exports.app = (0, express_1.default)();
+const frontendOrigins = env_1.env.frontendUrl
+    .split(",")
+    .map((origin) => origin.trim().replace(/\/$/, ""))
+    .filter(Boolean);
 exports.app.disable("x-powered-by");
 exports.app.use((_req, res, next) => {
     res.setHeader("X-Content-Type-Options", "nosniff");
@@ -25,7 +29,7 @@ exports.app.use((0, cors_1.default)({
         // Allow same-origin server checks, any local dev origin, and the configured frontend origin.
         if (!origin ||
             /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin) ||
-            origin === env_1.env.frontendUrl) {
+            frontendOrigins.includes(origin.replace(/\/$/, ""))) {
             callback(null, true);
         }
         else {

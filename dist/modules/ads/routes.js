@@ -132,7 +132,9 @@ router.get("/", async (req, res, next) => {
             prisma_1.prisma.ad.findMany({
                 where,
                 include: {
-                    images: true,
+                    images: imagesLimit
+                        ? { take: imagesLimit, orderBy: { createdAt: "asc" } }
+                        : true,
                     category: true,
                     user: { select: sellerSelect },
                 },
@@ -141,14 +143,7 @@ router.get("/", async (req, res, next) => {
                 take: pageSize,
             }),
         ]);
-        // Limit images if requested to reduce payload size
-        const processedAds = imagesLimit
-            ? ads.map(ad => ({
-                ...ad,
-                images: ad.images.slice(0, imagesLimit)
-            }))
-            : ads;
-        res.json({ success: true, data: processedAds, meta: { page, pageSize, total } });
+        res.json({ success: true, data: ads, meta: { page, pageSize, total } });
     }
     catch (e) {
         next(e);

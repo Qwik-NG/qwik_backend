@@ -104,17 +104,32 @@ router.get("/", auth_1.requireAuth, async (req, res, next) => {
             },
             include: {
                 ...conversationInclude,
-                messages: {
-                    orderBy: {
-                        createdAt: "asc",
+                _count: {
+                    select: {
+                        messages: {
+                            where: {
+                                senderId: { not: currentUserId },
+                                readAt: null,
+                            },
+                        },
                     },
+                },
+                messages: {
+                    orderBy: { createdAt: "desc" },
+                    take: 1,
                     include: messageInclude,
                 },
             },
         });
         res.json({
             success: true,
-            data: conversations.map((conversation) => serializeConversation(conversation, currentUserId)),
+            data: conversations.map((conversation) => ({
+                ...serializeConversation({
+                    ...conversation,
+                    messages: [...conversation.messages].reverse(),
+                }, currentUserId),
+                unreadCount: conversation._count.messages,
+            })),
         });
     }
     catch (e) {
@@ -154,6 +169,7 @@ router.post("/", auth_1.requireAuth, async (req, res, next) => {
             recipientId: zod_1.z.string().min(1),
             message: zod_1.z.string().min(1),
             adId: zod_1.z.string().min(1).optional(),
+            clientId: zod_1.z.string().min(1).max(100).optional(),
         }), req.body);
         if (body.recipientId === currentUserId) {
             return res.status(400).json({ success: false, message: "You cannot message yourself" });
@@ -216,6 +232,7 @@ router.post("/", auth_1.requireAuth, async (req, res, next) => {
             },
             data: { updatedAt: new Date() },
         });
+        const responseMessage = body.clientId ? { ...message, clientId: body.clientId } : message;
         void (0, notifications_1.createMessageNotification)({
             recipientId: body.recipientId,
             senderName: message.sender.fullName,
@@ -230,9 +247,9 @@ router.post("/", auth_1.requireAuth, async (req, res, next) => {
             console.error("Failed to create message notification", notificationError);
         });
         const participantIds = updatedConversation.participants.map((participant) => participant.userId);
-        (0, realtime_1.emitMessageNew)(conversationId, message, [body.recipientId]);
+        (0, realtime_1.emitMessageNew)(conversationId, responseMessage, [body.recipientId]);
         (0, realtime_1.emitConversationUpdated)(conversationId, {
-            lastMessage: message,
+            lastMessage: responseMessage,
             lastMessageAt: message.createdAt,
         }, participantIds);
         const conversation = await loadConversationForUser(conversationId, currentUserId);
