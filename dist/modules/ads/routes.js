@@ -5,6 +5,7 @@ const zod_1 = require("zod");
 const prisma_1 = require("../../lib/prisma");
 const validation_1 = require("../../utils/validation");
 const auth_1 = require("../../middleware/auth");
+const paymentPricing_1 = require("../../utils/paymentPricing");
 const router = (0, express_1.Router)();
 const sellerSelect = {
     id: true,
@@ -329,14 +330,14 @@ router.post("/:id/promotions", auth_1.requireAuth, async (req, res, next) => {
         if (ad.userId !== req.auth.userId)
             return res.status(403).json({ success: false, message: "Forbidden" });
         const b = (0, validation_1.parseOrThrow)(zod_1.z.object({
-            plan: zod_1.z.enum(["top-7", "premium-30"]).default("top-7"),
+            plan: zod_1.z.enum(paymentPricing_1.PROMOTION_PLAN_VALUES).default("top-1-month"),
         }), req.body);
         const payment = await prisma_1.prisma.paymentTransaction.create({
             data: {
                 userId: req.auth.userId,
                 adId: id,
                 purpose: "AD_PROMOTION",
-                amount: b.plan === "premium-30" ? 430000 : 161250,
+                amount: (0, paymentPricing_1.getPromotionPaymentAmountKobo)(b.plan),
                 currency: "NGN",
                 status: "PENDING",
                 provider: "manual",

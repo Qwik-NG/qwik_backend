@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "../../lib/prisma";
 import { parseOrThrow } from "../../utils/validation";
 import { requireAuth } from "../../middleware/auth";
+import { getPromotionPaymentAmountKobo, PROMOTION_PLAN_VALUES } from "../../utils/paymentPricing";
 const router = Router();
 
 const sellerSelect = {
@@ -349,7 +350,7 @@ router.post("/:id/promotions", requireAuth, async (req, res, next) => {
 
     const b = parseOrThrow(
       z.object({
-        plan: z.enum(["top-7", "premium-30"]).default("top-7"),
+        plan: z.enum(PROMOTION_PLAN_VALUES).default("top-1-month"),
       }),
       req.body,
     );
@@ -359,7 +360,7 @@ router.post("/:id/promotions", requireAuth, async (req, res, next) => {
         userId: req.auth!.userId,
         adId: id,
         purpose: "AD_PROMOTION",
-        amount: b.plan === "premium-30" ? 430000 : 161250,
+        amount: getPromotionPaymentAmountKobo(b.plan),
         currency: "NGN",
         status: "PENDING",
         provider: "manual",

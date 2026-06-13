@@ -4,6 +4,7 @@ const express_1 = require("express");
 const zod_1 = require("zod");
 const prisma_1 = require("../../lib/prisma");
 const auth_1 = require("../../middleware/auth");
+const paymentPricing_1 = require("../../utils/paymentPricing");
 const validation_1 = require("../../utils/validation");
 const router = (0, express_1.Router)();
 const checkoutSchema = zod_1.z.object({
@@ -21,10 +22,10 @@ const webhookSchema = zod_1.z.object({
 });
 function getCheckoutAmount(purpose, plan) {
     if (purpose === "VERIFICATION")
-        return 530000;
-    if (plan === "premium-30")
-        return 430000;
-    return 161250;
+        return paymentPricing_1.VERIFICATION_PAYMENT_AMOUNT_KOBO;
+    if ((0, paymentPricing_1.isPromotionPlan)(plan))
+        return (0, paymentPricing_1.getPromotionPaymentAmountKobo)(plan);
+    return null;
 }
 function paymentResponse(payment) {
     return {
@@ -44,6 +45,10 @@ router.post("/checkout", auth_1.requireAuth, async (req, res, next) => {
         }
         if (body.purpose === "AD_PROMOTION" && !body.adId) {
             return res.status(400).json({ success: false, message: "adId is required" });
+        }
+        const amount = getCheckoutAmount(body.purpose, body.plan);
+        if (amount === null) {
+            return res.status(400).json({ success: false, message: "A valid promotion plan is required" });
         }
         if (body.verificationId) {
             const verification = await prisma_1.prisma.verificationApplication.findFirst({
@@ -67,7 +72,7 @@ router.post("/checkout", auth_1.requireAuth, async (req, res, next) => {
                 verificationId: body.verificationId,
                 adId: body.adId,
                 purpose: body.purpose,
-                amount: getCheckoutAmount(body.purpose, body.plan),
+                amount,
                 currency: "NGN",
                 status: "PENDING",
                 provider: "manual",

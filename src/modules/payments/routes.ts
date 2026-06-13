@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../../lib/prisma";
 import { requireAuth } from "../../middleware/auth";
+import { getPromotionPaymentAmountKobo, isPromotionPlan, VERIFICATION_PAYMENT_AMOUNT_KOBO } from "../../utils/paymentPricing";
 import { parseOrThrow } from "../../utils/validation";
 
 const router = Router();
@@ -22,9 +23,9 @@ const webhookSchema = z.object({
 });
 
 function getCheckoutAmount(purpose: "VERIFICATION" | "AD_PROMOTION", plan?: string) {
-  if (purpose === "VERIFICATION") return 530000;
-  if (plan === "premium-30") return 430000;
-  return 161250;
+  if (purpose === "VERIFICATION") return VERIFICATION_PAYMENT_AMOUNT_KOBO;
+  if (isPromotionPlan(plan)) return getPromotionPaymentAmountKobo(plan);
+  return null;
 }
 
 function paymentResponse(payment: {
@@ -53,6 +54,10 @@ router.post("/checkout", requireAuth, async (req, res, next) => {
     if (body.purpose === "AD_PROMOTION" && !body.adId) {
       return res.status(400).json({ success: false, message: "adId is required" });
     }
+    const amount = getCheckoutAmount(body.purpose, body.plan);
+    if (amount === null) {
+      return res.status(400).json({ success: false, message: "A valid promotion plan is required" });
+    }
 
     if (body.verificationId) {
       const verification = await prisma.verificationApplication.findFirst({
@@ -76,7 +81,7 @@ router.post("/checkout", requireAuth, async (req, res, next) => {
         verificationId: body.verificationId,
         adId: body.adId,
         purpose: body.purpose,
-        amount: getCheckoutAmount(body.purpose, body.plan),
+        amount,
         currency: "NGN",
         status: "PENDING",
         provider: "manual",
