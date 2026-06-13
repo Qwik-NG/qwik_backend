@@ -3,7 +3,7 @@
     "version": "1.0.0",
     "main": "dist/server.js",
     "scripts": {
-        "build": "tsc",
+        "build": "prisma generate && tsc",
         "prisma:generate": "prisma generate",
         "prisma:migrate": "prisma migrate dev",
         "start": "node dist/server.js",
