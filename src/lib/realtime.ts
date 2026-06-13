@@ -127,6 +127,11 @@ export function emitConversationUpdated(conversationId: string, payload: Convers
   });
 }
 
+export function emitUnreadMessageCount(userId: string, count: number) {
+  if (!io) return;
+  io.to(userRoom(userId)).emit("messages:unread-count", { count });
+}
+
 export function emitNotificationNew(recipientId: string, notification: unknown) {
   if (!io) return;
   io.to(userRoom(recipientId)).emit("notification:new", { notification });

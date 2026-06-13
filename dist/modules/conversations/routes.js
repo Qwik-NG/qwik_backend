@@ -51,6 +51,19 @@ const conversationInclude = {
         },
     },
 };
+async function countUnreadMessages(userId) {
+    return prisma_1.prisma.message.count({
+        where: {
+            senderId: { not: userId },
+            readAt: null,
+            conversation: {
+                participants: {
+                    some: { userId },
+                },
+            },
+        },
+    });
+}
 function serializeConversation(record, currentUserId) {
     const participants = record.participants.map((participant) => participant.user);
     const lastMessage = record.messages?.[record.messages.length - 1];
@@ -136,11 +149,32 @@ router.get("/", auth_1.requireAuth, async (req, res, next) => {
         next(e);
     }
 });
+router.get("/unread-count", auth_1.requireAuth, async (req, res, next) => {
+    try {
+        const count = await countUnreadMessages(req.auth.userId);
+        res.json({ success: true, data: { count } });
+    }
+    catch (e) {
+        next(e);
+    }
+});
 router.get("/:id", auth_1.requireAuth, async (req, res, next) => {
     try {
         const currentUserId = req.auth.userId;
         const conversationId = String(req.params.id);
-        await prisma_1.prisma.message.updateMany({
+        const participant = await prisma_1.prisma.conversationParticipant.findUnique({
+            where: {
+                conversationId_userId: {
+                    conversationId,
+                    userId: currentUserId,
+                },
+            },
+            select: { id: true },
+        });
+        if (!participant) {
+            return res.status(404).json({ success: false, message: "Conversation not found" });
+        }
+        const readResult = await prisma_1.prisma.message.updateMany({
             where: {
                 conversationId,
                 senderId: {
@@ -155,6 +189,9 @@ router.get("/:id", auth_1.requireAuth, async (req, res, next) => {
         const conversation = await loadConversationForUser(conversationId, currentUserId);
         if (!conversation) {
             return res.status(404).json({ success: false, message: "Conversation not found" });
+        }
+        if (readResult.count > 0) {
+            (0, realtime_1.emitUnreadMessageCount)(currentUserId, await countUnreadMessages(currentUserId));
         }
         res.json({ success: true, data: serializeConversation(conversation, currentUserId) });
     }
@@ -266,6 +303,7 @@ router.post("/", auth_1.requireAuth, async (req, res, next) => {
             lastMessage: responseMessage,
             lastMessageAt: message.createdAt,
         }, participantIds);
+        (0, realtime_1.emitUnreadMessageCount)(body.recipientId, await countUnreadMessages(body.recipientId));
         const conversation = await loadConversationForUser(conversationId, currentUserId);
         if (!conversation) {
             return res.status(404).json({ success: false, message: "Conversation not found" });

@@ -4,7 +4,7 @@ import { prisma } from "../../lib/prisma";
 import { requireAuth } from "../../middleware/auth";
 import { parseOrThrow } from "../../utils/validation";
 import { createMessageNotification, createOfferNotification } from "../../utils/notifications";
-import { emitConversationUpdated, emitMessageNew, emitNotificationNew } from "../../lib/realtime";
+import { emitConversationUpdated, emitMessageNew, emitNotificationNew, emitUnreadMessageCount } from "../../lib/realtime";
 
 const router = Router();
 
@@ -55,6 +55,20 @@ const conversationInclude = {
 } as const;
 
 type ConversationRecord = Awaited<ReturnType<typeof loadConversationForUser>>;
+
+async function countUnreadMessages(userId: string) {
+  return prisma.message.count({
+    where: {
+      senderId: { not: userId },
+      readAt: null,
+      conversation: {
+        participants: {
+          some: { userId },
+        },
+      },
+    },
+  });
+}
 
 function serializeConversation(record: NonNullable<ConversationRecord>, currentUserId: string) {
   const participants = record.participants.map((participant) => participant.user);
@@ -148,12 +162,35 @@ router.get("/", requireAuth, async (req, res, next) => {
   }
 });
 
+router.get("/unread-count", requireAuth, async (req, res, next) => {
+  try {
+    const count = await countUnreadMessages(req.auth!.userId);
+    res.json({ success: true, data: { count } });
+  } catch (e) {
+    next(e);
+  }
+});
+
 router.get("/:id", requireAuth, async (req, res, next) => {
   try {
     const currentUserId = req.auth!.userId;
     const conversationId = String(req.params.id);
 
-    await prisma.message.updateMany({
+    const participant = await prisma.conversationParticipant.findUnique({
+      where: {
+        conversationId_userId: {
+          conversationId,
+          userId: currentUserId,
+        },
+      },
+      select: { id: true },
+    });
+
+    if (!participant) {
+      return res.status(404).json({ success: false, message: "Conversation not found" });
+    }
+
+    const readResult = await prisma.message.updateMany({
       where: {
         conversationId,
         senderId: {
@@ -169,6 +206,10 @@ router.get("/:id", requireAuth, async (req, res, next) => {
     const conversation = await loadConversationForUser(conversationId, currentUserId);
     if (!conversation) {
       return res.status(404).json({ success: false, message: "Conversation not found" });
+    }
+
+    if (readResult.count > 0) {
+      emitUnreadMessageCount(currentUserId, await countUnreadMessages(currentUserId));
     }
 
     res.json({ success: true, data: serializeConversation(conversation, currentUserId) });
@@ -301,6 +342,7 @@ router.post("/", requireAuth, async (req, res, next) => {
       },
       participantIds,
     );
+    emitUnreadMessageCount(body.recipientId, await countUnreadMessages(body.recipientId));
 
     const conversation = await loadConversationForUser(conversationId, currentUserId);
     if (!conversation) {

@@ -4,7 +4,7 @@ import { prisma } from "../../lib/prisma";
 import { requireAuth } from "../../middleware/auth";
 import { parseOrThrow } from "../../utils/validation";
 import { createMessageNotification, createOfferNotification } from "../../utils/notifications";
-import { emitConversationUpdated, emitMessageNew, emitNotificationNew } from "../../lib/realtime";
+import { emitConversationUpdated, emitMessageNew, emitNotificationNew, emitUnreadMessageCount } from "../../lib/realtime";
 
 const router = Router();
 
@@ -24,6 +24,20 @@ const userSelect = {
     },
   },
 } as const;
+
+async function countUnreadMessages(userId: string) {
+  return prisma.message.count({
+    where: {
+      senderId: { not: userId },
+      readAt: null,
+      conversation: {
+        participants: {
+          some: { userId },
+        },
+      },
+    },
+  });
+}
 
 router.post("/", requireAuth, async (req, res, next) => {
   try {
@@ -121,6 +135,10 @@ router.post("/", requireAuth, async (req, res, next) => {
       },
       participantIds,
     );
+
+    await Promise.all(recipientIds.map(async (recipientId) => {
+      emitUnreadMessageCount(recipientId, await countUnreadMessages(recipientId));
+    }));
 
     res.status(201).json({ success: true, data: responseMessage });
   } catch (e) {

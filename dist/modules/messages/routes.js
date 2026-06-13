@@ -24,6 +24,19 @@ const userSelect = {
         },
     },
 };
+async function countUnreadMessages(userId) {
+    return prisma_1.prisma.message.count({
+        where: {
+            senderId: { not: userId },
+            readAt: null,
+            conversation: {
+                participants: {
+                    some: { userId },
+                },
+            },
+        },
+    });
+}
 router.post("/", auth_1.requireAuth, async (req, res, next) => {
     try {
         const currentUserId = req.auth.userId;
@@ -105,6 +118,9 @@ router.post("/", auth_1.requireAuth, async (req, res, next) => {
             lastMessage: responseMessage,
             lastMessageAt: message.createdAt,
         }, participantIds);
+        await Promise.all(recipientIds.map(async (recipientId) => {
+            (0, realtime_1.emitUnreadMessageCount)(recipientId, await countUnreadMessages(recipientId));
+        }));
         res.status(201).json({ success: true, data: responseMessage });
     }
     catch (e) {

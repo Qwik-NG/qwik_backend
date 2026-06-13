@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.initRealtime = initRealtime;
 exports.emitMessageNew = emitMessageNew;
 exports.emitConversationUpdated = emitConversationUpdated;
+exports.emitUnreadMessageCount = emitUnreadMessageCount;
 exports.emitNotificationNew = emitNotificationNew;
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const socket_io_1 = require("socket.io");
@@ -114,6 +115,11 @@ function emitConversationUpdated(conversationId, payload, participantIds) {
     participantIds.forEach((participantId) => {
         io?.to(userRoom(participantId)).emit("conversation:updated", { conversationId, ...payload });
     });
+}
+function emitUnreadMessageCount(userId, count) {
+    if (!io)
+        return;
+    io.to(userRoom(userId)).emit("messages:unread-count", { count });
 }
 function emitNotificationNew(recipientId, notification) {
     if (!io)
