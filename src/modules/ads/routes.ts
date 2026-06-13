@@ -207,6 +207,14 @@ router.post("/", requireAuth, async (req, res, next) => {
       }),
       req.body,
     );
+    const category = await prisma.category.findUnique({
+      where: { id: b.categoryId },
+      select: { id: true },
+    });
+    if (!category) {
+      return res.status(400).json({ success: false, message: "Selected category is invalid. Please choose another category." });
+    }
+
     const ad = await prisma.ad.create({
       data: {
         userId: req.auth!.userId,
