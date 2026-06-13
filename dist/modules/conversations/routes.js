@@ -170,7 +170,12 @@ router.post("/", auth_1.requireAuth, async (req, res, next) => {
             message: zod_1.z.string().min(1),
             adId: zod_1.z.string().min(1).optional(),
             clientId: zod_1.z.string().min(1).max(100).optional(),
+            messageType: zod_1.z.enum(["text", "offer"]).optional(),
+            offerAmount: zod_1.z.number().positive().optional(),
         }), req.body);
+        if (body.messageType === "offer" && !body.offerAmount) {
+            return res.status(400).json({ success: false, message: "Offer amount is required" });
+        }
         if (body.recipientId === currentUserId) {
             return res.status(400).json({ success: false, message: "You cannot message yourself" });
         }
@@ -233,12 +238,21 @@ router.post("/", auth_1.requireAuth, async (req, res, next) => {
             data: { updatedAt: new Date() },
         });
         const responseMessage = body.clientId ? { ...message, clientId: body.clientId } : message;
-        void (0, notifications_1.createMessageNotification)({
-            recipientId: body.recipientId,
-            senderName: message.sender.fullName,
-            conversationId,
-            adTitle: updatedConversation.ad?.title,
-        })
+        const notificationRequest = body.messageType === "offer" && body.offerAmount
+            ? (0, notifications_1.createOfferNotification)({
+                recipientId: body.recipientId,
+                senderName: message.sender.fullName,
+                conversationId,
+                adTitle: updatedConversation.ad?.title,
+                amount: body.offerAmount,
+            })
+            : (0, notifications_1.createMessageNotification)({
+                recipientId: body.recipientId,
+                senderName: message.sender.fullName,
+                conversationId,
+                adTitle: updatedConversation.ad?.title,
+            });
+        void notificationRequest
             .then((notification) => {
             if (notification)
                 (0, realtime_1.emitNotificationNew)(body.recipientId, notification);

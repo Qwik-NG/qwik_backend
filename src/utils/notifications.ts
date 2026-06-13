@@ -10,6 +10,14 @@ type MessageNotificationInput = {
   adTitle?: string | null;
 };
 
+type OfferNotificationInput = MessageNotificationInput & {
+  amount: number;
+};
+
+function formatNaira(value: number) {
+  return `₦${value.toLocaleString()}`;
+}
+
 export async function createMessageNotification(
   input: MessageNotificationInput,
   client: NotificationClient = prisma,
@@ -31,6 +39,33 @@ export async function createMessageNotification(
       actionUrl: `/messages?conversation=${input.conversationId}`,
       data: {
         conversationId: input.conversationId,
+      },
+    },
+  });
+}
+
+export async function createOfferNotification(
+  input: OfferNotificationInput,
+  client: NotificationClient = prisma,
+) {
+  const settings = await client.notificationSettings.findUnique({
+    where: { userId: input.recipientId },
+    select: { offerNotifications: true },
+  });
+
+  if (settings && !settings.offerNotifications) return null;
+
+  const subject = input.adTitle ? ` for ${input.adTitle}` : "";
+  return client.notification.create({
+    data: {
+      userId: input.recipientId,
+      type: "offer",
+      title: "New offer",
+      body: `${input.senderName} sent an offer of ${formatNaira(input.amount)}${subject}.`,
+      actionUrl: `/messages?conversation=${input.conversationId}`,
+      data: {
+        conversationId: input.conversationId,
+        amount: input.amount,
       },
     },
   });

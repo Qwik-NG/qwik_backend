@@ -3,7 +3,7 @@ import { z } from "zod";
 import { prisma } from "../../lib/prisma";
 import { requireAuth } from "../../middleware/auth";
 import { parseOrThrow } from "../../utils/validation";
-import { createMessageNotification } from "../../utils/notifications";
+import { createMessageNotification, createOfferNotification } from "../../utils/notifications";
 import { emitConversationUpdated, emitMessageNew, emitNotificationNew } from "../../lib/realtime";
 
 const router = Router();
@@ -33,9 +33,15 @@ router.post("/", requireAuth, async (req, res, next) => {
         conversationId: z.string().min(1),
         text: z.string().min(1),
         clientId: z.string().min(1).max(100).optional(),
+        messageType: z.enum(["text", "offer"]).optional(),
+        offerAmount: z.number().positive().optional(),
       }),
       req.body,
     );
+
+    if (body.messageType === "offer" && !body.offerAmount) {
+      return res.status(400).json({ success: false, message: "Offer amount is required" });
+    }
 
     const conversation = await prisma.conversation.findFirst({
       where: {
@@ -85,12 +91,20 @@ router.post("/", requireAuth, async (req, res, next) => {
     void Promise.all(
       recipientIds.map(async (recipientId) => {
         try {
-          const notification = await createMessageNotification({
-            recipientId,
-            senderName: message.sender.fullName,
-            conversationId: body.conversationId,
-            adTitle: conversation.ad?.title,
-          });
+          const notification = body.messageType === "offer" && body.offerAmount
+            ? await createOfferNotification({
+                recipientId,
+                senderName: message.sender.fullName,
+                conversationId: body.conversationId,
+                adTitle: conversation.ad?.title,
+                amount: body.offerAmount,
+              })
+            : await createMessageNotification({
+                recipientId,
+                senderName: message.sender.fullName,
+                conversationId: body.conversationId,
+                adTitle: conversation.ad?.title,
+              });
           if (notification) emitNotificationNew(recipientId, notification);
         } catch (notificationError) {
           console.error("Failed to create message notification", notificationError);

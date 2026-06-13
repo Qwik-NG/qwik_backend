@@ -3,7 +3,7 @@ import { z } from "zod";
 import { prisma } from "../../lib/prisma";
 import { requireAuth } from "../../middleware/auth";
 import { parseOrThrow } from "../../utils/validation";
-import { createMessageNotification } from "../../utils/notifications";
+import { createMessageNotification, createOfferNotification } from "../../utils/notifications";
 import { emitConversationUpdated, emitMessageNew, emitNotificationNew } from "../../lib/realtime";
 
 const router = Router();
@@ -186,9 +186,15 @@ router.post("/", requireAuth, async (req, res, next) => {
         message: z.string().min(1),
         adId: z.string().min(1).optional(),
         clientId: z.string().min(1).max(100).optional(),
+        messageType: z.enum(["text", "offer"]).optional(),
+        offerAmount: z.number().positive().optional(),
       }),
       req.body,
     );
+
+    if (body.messageType === "offer" && !body.offerAmount) {
+      return res.status(400).json({ success: false, message: "Offer amount is required" });
+    }
 
     if (body.recipientId === currentUserId) {
       return res.status(400).json({ success: false, message: "You cannot message yourself" });
@@ -262,12 +268,22 @@ router.post("/", requireAuth, async (req, res, next) => {
     });
     const responseMessage = body.clientId ? { ...message, clientId: body.clientId } : message;
 
-    void createMessageNotification({
-      recipientId: body.recipientId,
-      senderName: message.sender.fullName,
-      conversationId,
-      adTitle: updatedConversation.ad?.title,
-    })
+    const notificationRequest = body.messageType === "offer" && body.offerAmount
+      ? createOfferNotification({
+          recipientId: body.recipientId,
+          senderName: message.sender.fullName,
+          conversationId,
+          adTitle: updatedConversation.ad?.title,
+          amount: body.offerAmount,
+        })
+      : createMessageNotification({
+          recipientId: body.recipientId,
+          senderName: message.sender.fullName,
+          conversationId,
+          adTitle: updatedConversation.ad?.title,
+        });
+
+    void notificationRequest
       .then((notification) => {
         if (notification) emitNotificationNew(body.recipientId, notification);
       })
