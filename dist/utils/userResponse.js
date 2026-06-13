@@ -29,6 +29,11 @@ function toAuthUser(user) {
             avatarUrl: user.profile?.avatarUrl ?? null,
         },
         verification: verificationSummary(user),
+        stats: {
+            adverts: user._count?.ads ?? 0,
+            followers: user._count?.followers ?? 0,
+            following: user._count?.following ?? 0,
+        },
     };
 }
 function toPublicUser(user) {
@@ -44,5 +49,10 @@ function toPublicUser(user) {
         },
         verification: verificationSummary(user),
         createdAt: user.createdAt,
+        stats: {
+            adverts: user._count?.ads ?? 0,
+            followers: user._count?.followers ?? 0,
+            following: user._count?.following ?? 0,
+        },
     };
 }

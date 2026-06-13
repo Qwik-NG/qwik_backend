@@ -17,6 +17,11 @@ type UserResponseSource = Pick<
 > & {
   profile?: Pick<UserProfile, "bio" | "avatarUrl"> | null;
   verificationApplications?: Array<{ id: string; status: string; paymentStatus: string }>;
+  _count?: {
+    ads?: number;
+    followers?: number;
+    following?: number;
+  };
 };
 
 function verificationSummary(user: UserResponseSource) {
@@ -47,6 +52,11 @@ export function toAuthUser(user: UserResponseSource) {
       avatarUrl: user.profile?.avatarUrl ?? null,
     },
     verification: verificationSummary(user),
+    stats: {
+      adverts: user._count?.ads ?? 0,
+      followers: user._count?.followers ?? 0,
+      following: user._count?.following ?? 0,
+    },
   };
 }
 
@@ -63,5 +73,10 @@ export function toPublicUser(user: UserResponseSource) {
     },
     verification: verificationSummary(user),
     createdAt: user.createdAt,
+    stats: {
+      adverts: user._count?.ads ?? 0,
+      followers: user._count?.followers ?? 0,
+      following: user._count?.following ?? 0,
+    },
   };
 }

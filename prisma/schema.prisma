@@ -86,6 +86,8 @@ model User {
   reviewedVerifications VerificationApplication[] @relation("VerificationReviewer")
   payments        PaymentTransaction[]
   adminAuditLogs  AdminAuditLog[] @relation("AdminAuditLogs")
+  following       Follow[] @relation("UserFollowing")
+  followers       Follow[] @relation("UserFollowers")
   resetToken      String?
   resetTokenExpAt DateTime?
 }
@@ -218,6 +220,19 @@ model SavedAd {
 
   @@unique([userId, adId])
   @@index([userId])
+}
+
+model Follow {
+  id          String   @id @default(cuid())
+  followerId  String
+  followingId String
+  createdAt   DateTime @default(now())
+  follower    User     @relation("UserFollowing", fields: [followerId], references: [id], onDelete: Cascade)
+  following   User     @relation("UserFollowers", fields: [followingId], references: [id], onDelete: Cascade)
+
+  @@unique([followerId, followingId])
+  @@index([followerId])
+  @@index([followingId])
 }
 
 model Review {
