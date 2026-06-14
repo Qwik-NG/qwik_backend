@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { env } from "../../config/env";
 import { prisma } from "../../lib/prisma";
 import { requireAuth } from "../../middleware/auth";
 import { getPromotionPaymentAmountKobo, isPromotionPlan, VERIFICATION_PAYMENT_AMOUNT_KOBO } from "../../utils/paymentPricing";
@@ -120,6 +121,11 @@ router.get("/:id", requireAuth, async (req, res, next) => {
 
 router.post("/webhook", async (req, res, next) => {
   try {
+    const expectedToken = `Bearer ${env.webhookSecret}`;
+    if (req.headers.authorization !== expectedToken) {
+      return res.status(401).json({ success: false, message: "Unauthorized" });
+    }
+
     const body = parseOrThrow(webhookSchema, req.body);
     const existingEvent = await prisma.paymentWebhookEvent.findUnique({
       where: { providerEventId: body.eventId },

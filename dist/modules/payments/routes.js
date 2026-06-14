@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
 const zod_1 = require("zod");
+const env_1 = require("../../config/env");
 const prisma_1 = require("../../lib/prisma");
 const auth_1 = require("../../middleware/auth");
 const paymentPricing_1 = require("../../utils/paymentPricing");
@@ -110,6 +111,10 @@ router.get("/:id", auth_1.requireAuth, async (req, res, next) => {
 });
 router.post("/webhook", async (req, res, next) => {
     try {
+        const expectedToken = `Bearer ${env_1.env.webhookSecret}`;
+        if (req.headers.authorization !== expectedToken) {
+            return res.status(401).json({ success: false, message: "Unauthorized" });
+        }
         const body = (0, validation_1.parseOrThrow)(webhookSchema, req.body);
         const existingEvent = await prisma_1.prisma.paymentWebhookEvent.findUnique({
             where: { providerEventId: body.eventId },
