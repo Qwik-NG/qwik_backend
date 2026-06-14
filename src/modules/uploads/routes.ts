@@ -5,7 +5,7 @@ import { Router, type NextFunction, type Request, type Response } from "express"
 import multer from "multer";
 import { env } from "../../config/env";
 import { isCloudinaryEnabled, uploadBuffer, uploadImageBuffer } from "../../lib/cloudinary";
-import { requireAuth } from "../../middleware/auth";
+import { requireActiveUser, requireAuth } from "../../middleware/auth";
 
 const router = Router();
 
@@ -138,6 +138,7 @@ function normalizeUploadError(err: unknown, _req: Request, res: Response, next: 
 router.post(
   "/images",
   requireAuth,
+  requireActiveUser,
   (req, res, next) => {
     upload.array("images", 10)(req, res, (err) => normalizeUploadError(err, req, res, next));
   },
@@ -195,6 +196,7 @@ router.post(
 router.post(
   "/documents",
   requireAuth,
+  requireActiveUser,
   (req, res, next) => {
     upload.array("documents", 10)(req, res, (err) => normalizeUploadError(err, req, res, next));
   },

@@ -49,7 +49,7 @@ router.get("/me", async (req, res, next) => {
         next(e);
     }
 });
-router.post("/", async (req, res, next) => {
+router.post("/", auth_1.requireActiveUser, async (req, res, next) => {
     try {
         const verification = await prisma_1.prisma.verificationApplication.upsert({
             where: { userId: req.auth.userId },
@@ -63,7 +63,7 @@ router.post("/", async (req, res, next) => {
         next(e);
     }
 });
-router.patch("/:id/business-info", async (req, res, next) => {
+router.patch("/:id/business-info", auth_1.requireActiveUser, async (req, res, next) => {
     try {
         const id = String(req.params.id);
         const existing = await findOwnVerification(id, req.auth.userId);
@@ -88,7 +88,7 @@ router.patch("/:id/business-info", async (req, res, next) => {
         next(e);
     }
 });
-router.post("/:id/documents", async (req, res, next) => {
+router.post("/:id/documents", auth_1.requireActiveUser, async (req, res, next) => {
     try {
         const id = String(req.params.id);
         const existing = await findOwnVerification(id, req.auth.userId);
@@ -123,7 +123,7 @@ router.post("/:id/documents", async (req, res, next) => {
         next(e);
     }
 });
-router.post("/:id/submit", async (req, res, next) => {
+router.post("/:id/submit", auth_1.requireActiveUser, async (req, res, next) => {
     try {
         const id = String(req.params.id);
         const existing = await findOwnVerification(id, req.auth.userId);

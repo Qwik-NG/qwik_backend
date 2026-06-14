@@ -4,8 +4,10 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.requireAuth = requireAuth;
+exports.requireActiveUser = requireActiveUser;
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const env_1 = require("../config/env");
+const prisma_1 = require("../lib/prisma");
 function requireAuth(req, res, next) {
     const header = req.headers.authorization;
     if (!header?.startsWith("Bearer "))
@@ -17,5 +19,22 @@ function requireAuth(req, res, next) {
     }
     catch {
         return res.status(401).json({ success: false, message: "Invalid token" });
+    }
+}
+async function requireActiveUser(req, res, next) {
+    if (!req.auth)
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+    try {
+        const user = await prisma_1.prisma.user.findUnique({
+            where: { id: req.auth.userId },
+            select: { status: true },
+        });
+        if (!user || user.status === "BANNED") {
+            return res.status(403).json({ success: false, message: "Account suspended" });
+        }
+        next();
+    }
+    catch (e) {
+        next(e);
     }
 }

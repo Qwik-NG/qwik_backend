@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../../lib/prisma";
 import { parseOrThrow } from "../../utils/validation";
-import { requireAuth } from "../../middleware/auth";
+import { requireActiveUser, requireAuth } from "../../middleware/auth";
 import { getPromotionPaymentAmountKobo, PROMOTION_PLAN_VALUES } from "../../utils/paymentPricing";
 const router = Router();
 
@@ -219,7 +219,7 @@ router.get("/:id", async (req, res, next) => {
     next(e);
   }
 });
-router.post("/", requireAuth, async (req, res, next) => {
+router.post("/", requireAuth, requireActiveUser, async (req, res, next) => {
   try {
     const b = parseOrThrow(
       z.object({
@@ -266,7 +266,7 @@ router.post("/", requireAuth, async (req, res, next) => {
   }
 });
 
-router.patch("/:id", requireAuth, async (req, res, next) => {
+router.patch("/:id", requireAuth, requireActiveUser, async (req, res, next) => {
   try {
     const id = String(req.params.id);
     const ad = await prisma.ad.findUnique({ where: { id } });
@@ -313,7 +313,7 @@ router.patch("/:id", requireAuth, async (req, res, next) => {
   }
 });
 
-router.delete("/:id", requireAuth, async (req, res, next) => {
+router.delete("/:id", requireAuth, requireActiveUser, async (req, res, next) => {
   try {
     const id = String(req.params.id);
     const ad = await prisma.ad.findUnique({ where: { id } });
@@ -327,7 +327,7 @@ router.delete("/:id", requireAuth, async (req, res, next) => {
     next(e);
   }
 });
-router.post("/:id/save", requireAuth, async (req, res, next) => {
+router.post("/:id/save", requireAuth, requireActiveUser, async (req, res, next) => {
   try {
     const id = String(req.params.id);
     if (!(await prisma.ad.findUnique({ where: { id }, select: { id: true } })))
@@ -356,7 +356,7 @@ router.get("/:id/saved", requireAuth, async (req, res, next) => {
   }
 });
 
-router.delete("/:id/save", requireAuth, async (req, res, next) => {
+router.delete("/:id/save", requireAuth, requireActiveUser, async (req, res, next) => {
   try {
     const id = String(req.params.id);
     await prisma.savedAd.deleteMany({
@@ -368,7 +368,7 @@ router.delete("/:id/save", requireAuth, async (req, res, next) => {
   }
 });
 
-router.post("/:id/promotions", requireAuth, async (req, res, next) => {
+router.post("/:id/promotions", requireAuth, requireActiveUser, async (req, res, next) => {
   try {
     const id = String(req.params.id);
     const ad = await prisma.ad.findUnique({ where: { id }, select: { id: true, userId: true } });
@@ -427,7 +427,7 @@ router.get("/:id/reviews", async (req, res, next) => {
   }
 });
 
-router.post("/:id/reviews", requireAuth, async (req, res, next) => {
+router.post("/:id/reviews", requireAuth, requireActiveUser, async (req, res, next) => {
   try {
     const id = String(req.params.id);
     if (!(await prisma.ad.findUnique({ where: { id }, select: { id: true } })))
@@ -462,7 +462,7 @@ router.post("/:id/reviews", requireAuth, async (req, res, next) => {
 });
 
 // Report endpoint
-router.post("/:id/report", requireAuth, async (req, res, next) => {
+router.post("/:id/report", requireAuth, requireActiveUser, async (req, res, next) => {
   try {
     const id = String(req.params.id);
     if (!(await prisma.ad.findUnique({ where: { id }, select: { id: true } })))

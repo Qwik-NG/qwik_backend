@@ -196,7 +196,7 @@ router.get("/:id", async (req, res, next) => {
         next(e);
     }
 });
-router.post("/", auth_1.requireAuth, async (req, res, next) => {
+router.post("/", auth_1.requireAuth, auth_1.requireActiveUser, async (req, res, next) => {
     try {
         const b = (0, validation_1.parseOrThrow)(zod_1.z.object({
             categoryId: zod_1.z.string().min(1),
@@ -239,7 +239,7 @@ router.post("/", auth_1.requireAuth, async (req, res, next) => {
         next(e);
     }
 });
-router.patch("/:id", auth_1.requireAuth, async (req, res, next) => {
+router.patch("/:id", auth_1.requireAuth, auth_1.requireActiveUser, async (req, res, next) => {
     try {
         const id = String(req.params.id);
         const ad = await prisma_1.prisma.ad.findUnique({ where: { id } });
@@ -282,7 +282,7 @@ router.patch("/:id", auth_1.requireAuth, async (req, res, next) => {
         next(e);
     }
 });
-router.delete("/:id", auth_1.requireAuth, async (req, res, next) => {
+router.delete("/:id", auth_1.requireAuth, auth_1.requireActiveUser, async (req, res, next) => {
     try {
         const id = String(req.params.id);
         const ad = await prisma_1.prisma.ad.findUnique({ where: { id } });
@@ -297,7 +297,7 @@ router.delete("/:id", auth_1.requireAuth, async (req, res, next) => {
         next(e);
     }
 });
-router.post("/:id/save", auth_1.requireAuth, async (req, res, next) => {
+router.post("/:id/save", auth_1.requireAuth, auth_1.requireActiveUser, async (req, res, next) => {
     try {
         const id = String(req.params.id);
         if (!(await prisma_1.prisma.ad.findUnique({ where: { id }, select: { id: true } })))
@@ -326,7 +326,7 @@ router.get("/:id/saved", auth_1.requireAuth, async (req, res, next) => {
         next(e);
     }
 });
-router.delete("/:id/save", auth_1.requireAuth, async (req, res, next) => {
+router.delete("/:id/save", auth_1.requireAuth, auth_1.requireActiveUser, async (req, res, next) => {
     try {
         const id = String(req.params.id);
         await prisma_1.prisma.savedAd.deleteMany({
@@ -338,7 +338,7 @@ router.delete("/:id/save", auth_1.requireAuth, async (req, res, next) => {
         next(e);
     }
 });
-router.post("/:id/promotions", auth_1.requireAuth, async (req, res, next) => {
+router.post("/:id/promotions", auth_1.requireAuth, auth_1.requireActiveUser, async (req, res, next) => {
     try {
         const id = String(req.params.id);
         const ad = await prisma_1.prisma.ad.findUnique({ where: { id }, select: { id: true, userId: true } });
@@ -393,7 +393,7 @@ router.get("/:id/reviews", async (req, res, next) => {
         next(e);
     }
 });
-router.post("/:id/reviews", auth_1.requireAuth, async (req, res, next) => {
+router.post("/:id/reviews", auth_1.requireAuth, auth_1.requireActiveUser, async (req, res, next) => {
     try {
         const id = String(req.params.id);
         if (!(await prisma_1.prisma.ad.findUnique({ where: { id }, select: { id: true } })))
@@ -424,7 +424,7 @@ router.post("/:id/reviews", auth_1.requireAuth, async (req, res, next) => {
     }
 });
 // Report endpoint
-router.post("/:id/report", auth_1.requireAuth, async (req, res, next) => {
+router.post("/:id/report", auth_1.requireAuth, auth_1.requireActiveUser, async (req, res, next) => {
     try {
         const id = String(req.params.id);
         if (!(await prisma_1.prisma.ad.findUnique({ where: { id }, select: { id: true } })))

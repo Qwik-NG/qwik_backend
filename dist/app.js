@@ -16,6 +16,18 @@ const frontendOrigins = env_1.env.frontendUrl
     .split(",")
     .map((origin) => origin.trim().replace(/\/$/, ""))
     .filter(Boolean);
+const cspConnectSources = ["'self'", ...frontendOrigins, env_1.env.publicUrl.replace(/\/$/, "")]
+    .filter(Boolean)
+    .join(" ");
+const contentSecurityPolicy = [
+    "default-src 'self'",
+    `connect-src ${cspConnectSources}`,
+    "img-src 'self' https://res.cloudinary.com data: blob:",
+    "script-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline'",
+    "font-src 'self' data:",
+    "frame-ancestors 'none'",
+].join("; ");
 exports.app.disable("x-powered-by");
 exports.app.set("trust proxy", 1);
 exports.app.use((_req, res, next) => {
@@ -23,6 +35,8 @@ exports.app.use((_req, res, next) => {
     res.setHeader("X-Frame-Options", "DENY");
     res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
     res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+    res.setHeader("Content-Security-Policy", contentSecurityPolicy);
+    res.setHeader("Strict-Transport-Security", "max-age=63072000; includeSubDomains");
     next();
 });
 exports.app.use((0, cors_1.default)({

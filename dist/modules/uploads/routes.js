@@ -104,7 +104,7 @@ function normalizeUploadError(err, _req, res, next) {
     }
     next(err);
 }
-router.post("/images", auth_1.requireAuth, (req, res, next) => {
+router.post("/images", auth_1.requireAuth, auth_1.requireActiveUser, (req, res, next) => {
     upload.array("images", 10)(req, res, (err) => normalizeUploadError(err, req, res, next));
 }, async (req, res, next) => {
     try {
@@ -149,7 +149,7 @@ router.post("/images", auth_1.requireAuth, (req, res, next) => {
         next(e);
     }
 });
-router.post("/documents", auth_1.requireAuth, (req, res, next) => {
+router.post("/documents", auth_1.requireAuth, auth_1.requireActiveUser, (req, res, next) => {
     upload.array("documents", 10)(req, res, (err) => normalizeUploadError(err, req, res, next));
 }, async (req, res, next) => {
     try {

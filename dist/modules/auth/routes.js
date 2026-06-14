@@ -63,7 +63,7 @@ router.post("/register", async (req, res, next) => {
     try {
         const b = (0, validation_1.parseOrThrow)(zod_1.z.object({
             email: zod_1.z.string().email(),
-            password: zod_1.z.string().min(6),
+            password: zod_1.z.string().min(8),
             fullName: zod_1.z.string().min(2),
             phone: zod_1.z.string().optional(),
             location: zod_1.z.string().optional(),
@@ -138,7 +138,7 @@ router.post("/forgot-password", async (req, res, next) => {
 });
 router.post("/reset-password", async (req, res, next) => {
     try {
-        const { token, password } = (0, validation_1.parseOrThrow)(zod_1.z.object({ token: zod_1.z.string().min(10), password: zod_1.z.string().min(6) }), req.body);
+        const { token, password } = (0, validation_1.parseOrThrow)(zod_1.z.object({ token: zod_1.z.string().min(10), password: zod_1.z.string().min(8) }), req.body);
         const user = await prisma_1.prisma.user.findFirst({ where: { resetToken: token, resetTokenExpAt: { gt: new Date() } } });
         if (!user)
             return res.status(400).json({ success: false, message: "Invalid or expired reset token" });

@@ -7,5 +7,5 @@ exports.signAuthToken = signAuthToken;
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const env_1 = require("../config/env");
 function signAuthToken(payload) {
-    return jsonwebtoken_1.default.sign(payload, env_1.env.jwtSecret, { expiresIn: "7d" });
+    return jsonwebtoken_1.default.sign(payload, env_1.env.jwtSecret, { expiresIn: "1d" });
 }
