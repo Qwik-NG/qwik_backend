@@ -30,6 +30,12 @@ const cappedPageSizeQuery = zod_1.z.preprocess((value) => {
     return Number.isNaN(numericValue) ? rawValue : Math.min(numericValue, 100);
 }, zod_1.z.coerce.number().int().min(1).default(24));
 const optionalLimitedIntegerQuery = (max) => zod_1.z.preprocess((value) => (value === undefined || value === "" ? undefined : Array.isArray(value) ? value[0] : value), zod_1.z.coerce.number().int().min(1).max(max).optional());
+const adSpecificationsSchema = zod_1.z.record(zod_1.z.string().min(1).max(100), zod_1.z.union([zod_1.z.string().max(500), zod_1.z.number(), zod_1.z.boolean(), zod_1.z.null()])).refine((value) => Object.keys(value).length <= 50, "Specifications cannot include more than 50 fields");
+const adImageUrlsSchema = zod_1.z.array(zod_1.z.string().url().max(2048)).min(4, "Please upload at least 4 product photos.").max(10);
+const adTitleSchema = zod_1.z.string().trim().min(3).max(200);
+const adDescriptionSchema = zod_1.z.string().trim().min(1).max(5000);
+const adLocationSchema = zod_1.z.string().trim().min(2).max(200);
+const adShortTextSchema = zod_1.z.string().trim().max(100);
 const adsListQuerySchema = zod_1.z.object({
     page: zod_1.z.coerce.number().int().min(1).default(1),
     pageSize: cappedPageSizeQuery,
@@ -200,15 +206,15 @@ router.post("/", auth_1.requireAuth, auth_1.requireActiveUser, async (req, res, 
     try {
         const b = (0, validation_1.parseOrThrow)(zod_1.z.object({
             categoryId: zod_1.z.string().min(1),
-            title: zod_1.z.string().min(3),
-            description: zod_1.z.string().min(1),
+            title: adTitleSchema,
+            description: adDescriptionSchema,
             price: zod_1.z.number().nonnegative(),
-            location: zod_1.z.string().min(2),
-            brand: zod_1.z.string().optional(),
-            model: zod_1.z.string().optional(),
-            condition: zod_1.z.string().optional(),
-            specifications: zod_1.z.unknown().optional(),
-            imageUrls: zod_1.z.array(zod_1.z.string()).min(4, "Please upload at least 4 product photos.").max(10),
+            location: adLocationSchema,
+            brand: adShortTextSchema.optional(),
+            model: adShortTextSchema.optional(),
+            condition: adShortTextSchema.optional(),
+            specifications: adSpecificationsSchema.optional(),
+            imageUrls: adImageUrlsSchema,
         }), req.body);
         const category = await prisma_1.prisma.category.findUnique({
             where: { id: b.categoryId },
@@ -248,15 +254,15 @@ router.patch("/:id", auth_1.requireAuth, auth_1.requireActiveUser, async (req, r
         if (ad.userId !== req.auth.userId)
             return res.status(403).json({ success: false, message: "Forbidden" });
         const b = (0, validation_1.parseOrThrow)(zod_1.z.object({
-            title: zod_1.z.string().min(3).optional(),
-            description: zod_1.z.string().min(1).optional(),
+            title: adTitleSchema.optional(),
+            description: adDescriptionSchema.optional(),
             price: zod_1.z.number().nonnegative().optional(),
-            location: zod_1.z.string().min(2).optional(),
-            brand: zod_1.z.string().optional(),
-            model: zod_1.z.string().optional(),
-            condition: zod_1.z.string().optional(),
-            specifications: zod_1.z.unknown().optional(),
-            imageUrls: zod_1.z.array(zod_1.z.string()).min(4, "Please upload at least 4 product photos.").max(10).optional(),
+            location: adLocationSchema.optional(),
+            brand: adShortTextSchema.optional(),
+            model: adShortTextSchema.optional(),
+            condition: adShortTextSchema.optional(),
+            specifications: adSpecificationsSchema.optional(),
+            imageUrls: adImageUrlsSchema.optional(),
             status: zod_1.z.enum(["ACTIVE", "SOLD", "DRAFT", "ARCHIVED"]).optional(),
         }), req.body);
         const { imageUrls, ...adFields } = b;

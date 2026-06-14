@@ -37,7 +37,7 @@ export function initRealtime(server: HttpServer) {
   });
 
   io.use((socket, next) => {
-    const token = socket.handshake.auth?.token || socket.handshake.query?.token;
+    const token = socket.handshake.auth?.token;
     if (typeof token !== "string") {
       next(new Error("Unauthorized"));
       return;

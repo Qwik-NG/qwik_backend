@@ -39,6 +39,17 @@ const optionalLimitedIntegerQuery = (max: number) => z.preprocess(
   z.coerce.number().int().min(1).max(max).optional(),
 );
 
+const adSpecificationsSchema = z.record(
+  z.string().min(1).max(100),
+  z.union([z.string().max(500), z.number(), z.boolean(), z.null()]),
+).refine((value) => Object.keys(value).length <= 50, "Specifications cannot include more than 50 fields");
+
+const adImageUrlsSchema = z.array(z.string().url().max(2048)).min(4, "Please upload at least 4 product photos.").max(10);
+const adTitleSchema = z.string().trim().min(3).max(200);
+const adDescriptionSchema = z.string().trim().min(1).max(5000);
+const adLocationSchema = z.string().trim().min(2).max(200);
+const adShortTextSchema = z.string().trim().max(100);
+
 const adsListQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: cappedPageSizeQuery,
@@ -224,15 +235,15 @@ router.post("/", requireAuth, requireActiveUser, async (req, res, next) => {
     const b = parseOrThrow(
       z.object({
         categoryId: z.string().min(1),
-        title: z.string().min(3),
-        description: z.string().min(1),
+        title: adTitleSchema,
+        description: adDescriptionSchema,
         price: z.number().nonnegative(),
-        location: z.string().min(2),
-        brand: z.string().optional(),
-        model: z.string().optional(),
-        condition: z.string().optional(),
-        specifications: z.unknown().optional(),
-        imageUrls: z.array(z.string()).min(4, "Please upload at least 4 product photos.").max(10),
+        location: adLocationSchema,
+        brand: adShortTextSchema.optional(),
+        model: adShortTextSchema.optional(),
+        condition: adShortTextSchema.optional(),
+        specifications: adSpecificationsSchema.optional(),
+        imageUrls: adImageUrlsSchema,
       }),
       req.body,
     );
@@ -276,15 +287,15 @@ router.patch("/:id", requireAuth, requireActiveUser, async (req, res, next) => {
       return res.status(403).json({ success: false, message: "Forbidden" });
     const b = parseOrThrow(
       z.object({
-        title: z.string().min(3).optional(),
-        description: z.string().min(1).optional(),
+        title: adTitleSchema.optional(),
+        description: adDescriptionSchema.optional(),
         price: z.number().nonnegative().optional(),
-        location: z.string().min(2).optional(),
-        brand: z.string().optional(),
-        model: z.string().optional(),
-        condition: z.string().optional(),
-        specifications: z.unknown().optional(),
-        imageUrls: z.array(z.string()).min(4, "Please upload at least 4 product photos.").max(10).optional(),
+        location: adLocationSchema.optional(),
+        brand: adShortTextSchema.optional(),
+        model: adShortTextSchema.optional(),
+        condition: adShortTextSchema.optional(),
+        specifications: adSpecificationsSchema.optional(),
+        imageUrls: adImageUrlsSchema.optional(),
         status: z.enum(["ACTIVE", "SOLD", "DRAFT", "ARCHIVED"]).optional(),
       }),
       req.body,

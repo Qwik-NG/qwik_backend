@@ -24,7 +24,7 @@ const businessInfoSchema = zod_1.z.object({
     dateOfBirth: zod_1.z.string().optional(),
 });
 const documentSchema = zod_1.z.object({
-    url: zod_1.z.string().min(1),
+    url: zod_1.z.string().url().refine((url) => url.startsWith("https://res.cloudinary.com/"), "Invalid document URL"),
     name: zod_1.z.string().optional(),
     type: zod_1.z.string().optional(),
     size: zod_1.z.number().int().nonnegative().optional(),

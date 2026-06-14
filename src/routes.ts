@@ -13,18 +13,21 @@ import paymentRoutes from "./modules/payments/routes";
 import { createRateLimiter } from "./middleware/rateLimit";
 
 const router = Router();
+const globalRateLimit = createRateLimiter({ keyPrefix: "global", windowMs: 15 * 60_000, max: 200 });
 const authRateLimit = createRateLimiter({ keyPrefix: "auth", windowMs: 15 * 60_000, max: 50 });
 const uploadRateLimit = createRateLimiter({ keyPrefix: "uploads", windowMs: 15 * 60_000, max: 30 });
+const messageRateLimit = createRateLimiter({ keyPrefix: "messages", windowMs: 60_000, max: 60 });
 
 router.get("/health", (_req, res) => res.json({ success: true, data: { status: "ok" }, message: "Qwik API is running" }));
+router.use(globalRateLimit);
 router.use("/auth", authRateLimit, authRoutes);
 router.use("/users", userRoutes);
 router.use("/categories", categoryRoutes);
 router.use("/ads", adRoutes);
 router.use("/uploads", uploadRateLimit, uploadRoutes);
 router.use("/admin", adminRoutes);
-router.use("/conversations", conversationRoutes);
-router.use("/messages", messageRoutes);
+router.use("/conversations", messageRateLimit, conversationRoutes);
+router.use("/messages", messageRateLimit, messageRoutes);
 router.use("/notifications", notificationRoutes);
 router.use("/verification", verificationRoutes);
 router.use("/payments", paymentRoutes);

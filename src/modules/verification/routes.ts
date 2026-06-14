@@ -26,7 +26,7 @@ const businessInfoSchema = z.object({
 });
 
 const documentSchema = z.object({
-  url: z.string().min(1),
+  url: z.string().url().refine((url) => url.startsWith("https://res.cloudinary.com/"), "Invalid document URL"),
   name: z.string().optional(),
   type: z.string().optional(),
   size: z.number().int().nonnegative().optional(),

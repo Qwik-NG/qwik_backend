@@ -78,7 +78,7 @@ router.post("/register", async (req, res, next) => {
     const user = await prisma.user.create({
       data: {
         email: b.email.toLowerCase(),
-        passwordHash: await bcrypt.hash(b.password, 10),
+        passwordHash: await bcrypt.hash(b.password, 12),
         fullName: b.fullName,
         phone: b.phone,
         location: b.location,
@@ -131,7 +131,7 @@ router.post("/reset-password", async (req, res, next) => {
     const { token, password } = parseOrThrow(z.object({ token: z.string().min(10), password: z.string().min(8) }), req.body);
     const user = await prisma.user.findFirst({ where: { resetToken: token, resetTokenExpAt: { gt: new Date() } } });
     if (!user) return res.status(400).json({ success: false, message: "Invalid or expired reset token" });
-    await prisma.user.update({ where: { id: user.id }, data: { passwordHash: await bcrypt.hash(password, 10), resetToken: null, resetTokenExpAt: null } });
+    await prisma.user.update({ where: { id: user.id }, data: { passwordHash: await bcrypt.hash(password, 12), resetToken: null, resetTokenExpAt: null } });
     res.json({ success: true, message: "Password reset successful" });
   } catch (e) { next(e); }
 });
