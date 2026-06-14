@@ -8,9 +8,7 @@ const router = Router();
 
 const sellerSelect = {
   id: true,
-  email: true,
   fullName: true,
-  phone: true,
   location: true,
   role: true,
   createdAt: true,
@@ -21,6 +19,39 @@ const sellerSelect = {
     select: { id: true, status: true, paymentStatus: true },
   },
 };
+
+const optionalStringQuery = z.preprocess(
+  (value) => (Array.isArray(value) ? value[0] : value),
+  z.string().optional().default(""),
+);
+const optionalNumberQuery = z.preprocess(
+  (value) => (value === undefined || value === "" ? undefined : Array.isArray(value) ? value[0] : value),
+  z.coerce.number().optional(),
+);
+const cappedPageSizeQuery = z.preprocess((value) => {
+  if (value === undefined || value === "") return undefined;
+  const rawValue = Array.isArray(value) ? value[0] : value;
+  const numericValue = Number(rawValue);
+  return Number.isNaN(numericValue) ? rawValue : Math.min(numericValue, 100);
+}, z.coerce.number().int().min(1).default(24));
+const optionalLimitedIntegerQuery = (max: number) => z.preprocess(
+  (value) => (value === undefined || value === "" ? undefined : Array.isArray(value) ? value[0] : value),
+  z.coerce.number().int().min(1).max(max).optional(),
+);
+
+const adsListQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: cappedPageSizeQuery,
+  q: optionalStringQuery,
+  search: optionalStringQuery,
+  location: optionalStringQuery,
+  categoryId: optionalStringQuery,
+  category: optionalStringQuery,
+  subcategory: optionalStringQuery,
+  minPrice: optionalNumberQuery,
+  maxPrice: optionalNumberQuery,
+  imagesLimit: optionalLimitedIntegerQuery(10),
+});
 
 const adInclude = {
   images: true,
@@ -108,16 +139,13 @@ async function getCategoryIds(input: {
 
 router.get("/", async (req, res, next) => {
   try {
-    const page = Number(req.query.page ?? 1);
-    const pageSize = Number(req.query.pageSize ?? 24);
-    const search = String(req.query.q ?? req.query.search ?? "").trim();
-    const location = String(req.query.location ?? "").trim();
-    const categoryId = String(req.query.categoryId ?? "").trim();
-    const category = String(req.query.category ?? "").trim();
-    const subcategory = String(req.query.subcategory ?? "").trim();
-    const minPrice = req.query.minPrice ? Number(req.query.minPrice) : undefined;
-    const maxPrice = req.query.maxPrice ? Number(req.query.maxPrice) : undefined;
-    const imagesLimit = req.query.imagesLimit ? Number(req.query.imagesLimit) : undefined;
+    const query = parseOrThrow(adsListQuerySchema, req.query);
+    const { page, pageSize, minPrice, maxPrice, imagesLimit } = query;
+    const search = (query.q || query.search).trim();
+    const location = query.location.trim();
+    const categoryId = query.categoryId.trim();
+    const category = query.category.trim();
+    const subcategory = query.subcategory.trim();
     const locationTerms = getLocationSearchTerms(location);
     const searchFilters = search
       ? [
@@ -258,7 +286,6 @@ router.patch("/:id", requireAuth, async (req, res, next) => {
         specifications: z.unknown().optional(),
         imageUrls: z.array(z.string()).min(4, "Please upload at least 4 product photos.").max(10).optional(),
         status: z.enum(["ACTIVE", "SOLD", "DRAFT", "ARCHIVED"]).optional(),
-        isPromoted: z.boolean().optional(),
       }),
       req.body,
     );

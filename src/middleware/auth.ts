@@ -2,7 +2,7 @@ import { NextFunction, Request, Response } from "express";
 import jwt from "jsonwebtoken";
 import { env } from "../config/env";
 
-export type AuthPayload = { userId: string; email: string };
+export type AuthPayload = { userId: string; email: string; role?: string };
 
 declare global {
   namespace Express {

@@ -20,6 +20,8 @@ export const env = {
   jwtSecret: process.env.JWT_SECRET as string,
   frontendUrl: process.env.FRONTEND_URL ?? "http://localhost:5173",
   publicUrl: process.env.PUBLIC_URL ?? process.env.BACKEND_URL ?? process.env.RENDER_EXTERNAL_URL ?? "",
+  resendApiKey: process.env.RESEND_API_KEY ?? "",
+  resendFromEmail: process.env.RESEND_FROM_EMAIL ?? "Qwik <onboarding@resend.dev>",
   cloudinaryEnabled,
   cloudinaryCloudName: process.env.CLOUDINARY_CLOUD_NAME ?? "",
   cloudinaryApiKey: process.env.CLOUDINARY_API_KEY ?? "",

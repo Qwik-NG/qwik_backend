@@ -9,9 +9,7 @@ const paymentPricing_1 = require("../../utils/paymentPricing");
 const router = (0, express_1.Router)();
 const sellerSelect = {
     id: true,
-    email: true,
     fullName: true,
-    phone: true,
     location: true,
     role: true,
     createdAt: true,
@@ -22,6 +20,29 @@ const sellerSelect = {
         select: { id: true, status: true, paymentStatus: true },
     },
 };
+const optionalStringQuery = zod_1.z.preprocess((value) => (Array.isArray(value) ? value[0] : value), zod_1.z.string().optional().default(""));
+const optionalNumberQuery = zod_1.z.preprocess((value) => (value === undefined || value === "" ? undefined : Array.isArray(value) ? value[0] : value), zod_1.z.coerce.number().optional());
+const cappedPageSizeQuery = zod_1.z.preprocess((value) => {
+    if (value === undefined || value === "")
+        return undefined;
+    const rawValue = Array.isArray(value) ? value[0] : value;
+    const numericValue = Number(rawValue);
+    return Number.isNaN(numericValue) ? rawValue : Math.min(numericValue, 100);
+}, zod_1.z.coerce.number().int().min(1).default(24));
+const optionalLimitedIntegerQuery = (max) => zod_1.z.preprocess((value) => (value === undefined || value === "" ? undefined : Array.isArray(value) ? value[0] : value), zod_1.z.coerce.number().int().min(1).max(max).optional());
+const adsListQuerySchema = zod_1.z.object({
+    page: zod_1.z.coerce.number().int().min(1).default(1),
+    pageSize: cappedPageSizeQuery,
+    q: optionalStringQuery,
+    search: optionalStringQuery,
+    location: optionalStringQuery,
+    categoryId: optionalStringQuery,
+    category: optionalStringQuery,
+    subcategory: optionalStringQuery,
+    minPrice: optionalNumberQuery,
+    maxPrice: optionalNumberQuery,
+    imagesLimit: optionalLimitedIntegerQuery(10),
+});
 const adInclude = {
     images: true,
     category: true,
@@ -96,16 +117,13 @@ async function getCategoryIds(input) {
 }
 router.get("/", async (req, res, next) => {
     try {
-        const page = Number(req.query.page ?? 1);
-        const pageSize = Number(req.query.pageSize ?? 24);
-        const search = String(req.query.q ?? req.query.search ?? "").trim();
-        const location = String(req.query.location ?? "").trim();
-        const categoryId = String(req.query.categoryId ?? "").trim();
-        const category = String(req.query.category ?? "").trim();
-        const subcategory = String(req.query.subcategory ?? "").trim();
-        const minPrice = req.query.minPrice ? Number(req.query.minPrice) : undefined;
-        const maxPrice = req.query.maxPrice ? Number(req.query.maxPrice) : undefined;
-        const imagesLimit = req.query.imagesLimit ? Number(req.query.imagesLimit) : undefined;
+        const query = (0, validation_1.parseOrThrow)(adsListQuerySchema, req.query);
+        const { page, pageSize, minPrice, maxPrice, imagesLimit } = query;
+        const search = (query.q || query.search).trim();
+        const location = query.location.trim();
+        const categoryId = query.categoryId.trim();
+        const category = query.category.trim();
+        const subcategory = query.subcategory.trim();
         const locationTerms = getLocationSearchTerms(location);
         const searchFilters = search
             ? [
@@ -240,7 +258,6 @@ router.patch("/:id", auth_1.requireAuth, async (req, res, next) => {
             specifications: zod_1.z.unknown().optional(),
             imageUrls: zod_1.z.array(zod_1.z.string()).min(4, "Please upload at least 4 product photos.").max(10).optional(),
             status: zod_1.z.enum(["ACTIVE", "SOLD", "DRAFT", "ARCHIVED"]).optional(),
-            isPromoted: zod_1.z.boolean().optional(),
         }), req.body);
         const { imageUrls, ...adFields } = b;
         const data = { ...adFields, specifications: b.specifications };

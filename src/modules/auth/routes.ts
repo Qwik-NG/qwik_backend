@@ -2,16 +2,20 @@
 import { Router } from "express";
 import bcrypt from "bcrypt";
 import crypto from "crypto";
+import { Resend } from "resend";
 import { z } from "zod";
 import { prisma } from "../../lib/prisma";
 import { signAuthToken } from "../../utils/jwt";
 import { parseOrThrow } from "../../utils/validation";
 import { requireAuth } from "../../middleware/auth";
 import { toAuthUser } from "../../utils/userResponse";
+import { env } from "../../config/env";
 
 const router = Router();
 const TERMS_VERSION = "2026-06-09";
 const PRIVACY_VERSION = "2026-06-09";
+const RESET_PASSWORD_MESSAGE = "If that email exists, a reset link has been sent";
+const resend = env.resendApiKey ? new Resend(env.resendApiKey) : null;
 const authUserSelect = {
   id: true,
   email: true,
@@ -32,6 +36,29 @@ const authUserSelect = {
     take: 1,
   },
 };
+
+function resetPasswordUrl(token: string) {
+  const frontendOrigin = env.frontendUrl.split(",")[0]?.trim().replace(/\/$/, "") || "http://localhost:5173";
+  const url = new URL("/create-password", frontendOrigin);
+  url.searchParams.set("token", token);
+  return url.toString();
+}
+
+async function sendPasswordResetEmail(email: string, resetToken: string) {
+  if (!resend) {
+    console.error("RESEND_API_KEY is not configured; password reset email was not sent");
+    return;
+  }
+
+  const link = resetPasswordUrl(resetToken);
+  await resend.emails.send({
+    from: env.resendFromEmail,
+    to: email,
+    subject: "Reset your Qwik password",
+    text: `Use this link to reset your Qwik password: ${link}\n\nThis link expires in 30 minutes.`,
+    html: `<p>Use this link to reset your Qwik password:</p><p><a href="${link}">Reset password</a></p><p>This link expires in 30 minutes.</p>`,
+  });
+}
 
 router.post("/register", async (req, res, next) => {
   try {
@@ -63,7 +90,7 @@ router.post("/register", async (req, res, next) => {
       },
       select: authUserSelect,
     });
-    const token = signAuthToken({ userId: user.id, email: user.email });
+    const token = signAuthToken({ userId: user.id, email: user.email, role: user.role });
     res.status(201).json({ success: true, data: { token, user: toAuthUser(user) } });
   } catch (e) { next(e); }
 });
@@ -79,7 +106,7 @@ router.post("/login", async (req, res, next) => {
       return res.status(401).json({ success: false, message: "Invalid credentials" });
     }
     if (user.status === "BANNED") return res.status(403).json({ success: false, message: "This account has been suspended" });
-    const token = signAuthToken({ userId: user.id, email: user.email });
+    const token = signAuthToken({ userId: user.id, email: user.email, role: user.role });
     res.json({ success: true, data: { token, user: toAuthUser(user) } });
   } catch (e) { next(e); }
 });
@@ -87,10 +114,15 @@ router.post("/forgot-password", async (req, res, next) => {
   try {
     const { email } = parseOrThrow(z.object({ email: z.string().email() }), req.body);
     const user = await prisma.user.findUnique({ where: { email: email.toLowerCase() } });
-    if (!user) return res.json({ success: true, message: "If that email exists, a reset link has been prepared" });
+    if (!user) return res.json({ success: true, message: RESET_PASSWORD_MESSAGE });
     const resetToken = crypto.randomBytes(24).toString("hex");
     await prisma.user.update({ where: { id: user.id }, data: { resetToken, resetTokenExpAt: new Date(Date.now() + 1800000) } });
-    res.json({ success: true, data: { resetToken }, message: "Reset token generated" });
+    try {
+      await sendPasswordResetEmail(user.email, resetToken);
+    } catch (emailError) {
+      console.error("Failed to send password reset email", emailError);
+    }
+    res.json({ success: true, message: RESET_PASSWORD_MESSAGE });
   } catch (e) { next(e); }
 });
 

@@ -10,9 +10,7 @@ import { env } from "../../config/env";
 const router = Router();
 const sellerSelect = {
   id: true,
-  email: true,
   fullName: true,
-  phone: true,
   location: true,
   role: true,
   createdAt: true,
