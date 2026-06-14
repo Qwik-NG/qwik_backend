@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { env } from "../../config/env";
+import { createPaystackReference, initializePaystackTransaction, mapPaystackStatus, verifyPaystackSignature, verifyPaystackTransaction } from "../../lib/paystack";
 import { prisma } from "../../lib/prisma";
 import { requireAuth } from "../../middleware/auth";
 import { getPromotionPaymentAmountKobo, isPromotionPlan, VERIFICATION_PAYMENT_AMOUNT_KOBO } from "../../utils/paymentPricing";
@@ -23,6 +24,12 @@ const webhookSchema = z.object({
   payload: z.unknown().optional(),
 });
 
+const verifySchema = z.object({
+  reference: z.string().min(1),
+});
+
+type PaymentStatusValue = "PENDING" | "PAID" | "FAILED" | "CANCELLED";
+
 function getCheckoutAmount(purpose: "VERIFICATION" | "AD_PROMOTION", plan?: string) {
   if (purpose === "VERIFICATION") return VERIFICATION_PAYMENT_AMOUNT_KOBO;
   if (isPromotionPlan(plan)) return getPromotionPaymentAmountKobo(plan);
@@ -31,6 +38,10 @@ function getCheckoutAmount(purpose: "VERIFICATION" | "AD_PROMOTION", plan?: stri
 
 function paymentResponse(payment: {
   id: string;
+  providerRef?: string | null;
+  purpose?: string;
+  adId?: string | null;
+  verificationId?: string | null;
   amount: number;
   currency: string;
   status: string;
@@ -38,7 +49,12 @@ function paymentResponse(payment: {
 }) {
   return {
     paymentId: payment.id,
+    reference: payment.providerRef ?? null,
+    purpose: payment.purpose ?? null,
+    adId: payment.adId ?? null,
+    verificationId: payment.verificationId ?? null,
     checkoutUrl: payment.checkoutUrl,
+    authorization_url: payment.checkoutUrl,
     amount: payment.amount,
     currency: payment.currency,
     status: payment.status,
@@ -46,9 +62,58 @@ function paymentResponse(payment: {
   };
 }
 
+function paystackCallbackUrl(reference: string) {
+  const baseUrl = env.paystackCallbackUrl || `${env.frontendUrl.split(",")[0].trim().replace(/\/$/, "")}/payment/callback`;
+  const url = new URL(baseUrl);
+  url.searchParams.set("reference", reference);
+  return url.toString();
+}
+
+async function applyPaymentStatus(tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0], input: {
+  paymentId: string;
+  status: PaymentStatusValue;
+  provider: string;
+  providerRef?: string | null;
+  expectedAmount?: number;
+}) {
+  const payment = await tx.paymentTransaction.findUnique({ where: { id: input.paymentId } });
+  if (!payment) throw Object.assign(new Error("Payment not found"), { status: 404 });
+  if (input.expectedAmount !== undefined && payment.amount !== input.expectedAmount) {
+    throw Object.assign(new Error("Payment amount mismatch"), { status: 400 });
+  }
+
+  const updatedPayment = await tx.paymentTransaction.update({
+    where: { id: input.paymentId },
+    data: {
+      status: input.status,
+      provider: input.provider,
+      ...(input.providerRef ? { providerRef: input.providerRef } : {}),
+    },
+  });
+
+  if (updatedPayment.verificationId) {
+    await tx.verificationApplication.update({
+      where: { id: updatedPayment.verificationId },
+      data: {
+        paymentStatus: input.status === "PAID" ? "PAID" : input.status === "FAILED" ? "FAILED" : input.status === "CANCELLED" ? "FAILED" : "PENDING",
+        ...(input.status === "PAID" ? { status: "SUBMITTED", submittedAt: new Date(), rejectionReason: null } : {}),
+      },
+    });
+  }
+
+  if (updatedPayment.adId && updatedPayment.purpose === "AD_PROMOTION" && input.status === "PAID") {
+    await tx.ad.update({ where: { id: updatedPayment.adId }, data: { isPromoted: true } });
+  }
+
+  return updatedPayment;
+}
+
 router.post("/checkout", requireAuth, async (req, res, next) => {
   try {
     const body = parseOrThrow(checkoutSchema, req.body);
+    const currentUser = await prisma.user.findUnique({ where: { id: req.auth!.userId }, select: { id: true, email: true } });
+    if (!currentUser) return res.status(404).json({ success: false, message: "User not found" });
+
     if (body.purpose === "VERIFICATION" && !body.verificationId) {
       return res.status(400).json({ success: false, message: "verificationId is required" });
     }
@@ -85,8 +150,33 @@ router.post("/checkout", requireAuth, async (req, res, next) => {
         amount,
         currency: "NGN",
         status: "PENDING",
-        provider: "manual",
+        provider: "paystack",
         metadata: { plan: body.plan ?? null },
+      },
+    });
+
+    const reference = createPaystackReference(payment.id);
+    const initialized = await initializePaystackTransaction({
+      email: currentUser.email,
+      amount: payment.amount,
+      reference,
+      callbackUrl: paystackCallbackUrl(reference),
+      metadata: {
+        paymentId: payment.id,
+        userId: currentUser.id,
+        purpose: payment.purpose,
+        verificationId: payment.verificationId,
+        adId: payment.adId,
+        plan: body.plan ?? null,
+      },
+    });
+
+    const updatedPayment = await prisma.paymentTransaction.update({
+      where: { id: payment.id },
+      data: {
+        providerRef: initialized.reference,
+        checkoutUrl: initialized.authorizationUrl,
+        metadata: { plan: body.plan ?? null, paystackAccessCode: initialized.accessCode },
       },
     });
 
@@ -99,9 +189,57 @@ router.post("/checkout", requireAuth, async (req, res, next) => {
 
     res.status(201).json({
       success: true,
-      data: paymentResponse(payment),
-      message: "Payment record created. Provider checkout is not configured yet.",
+      data: paymentResponse(updatedPayment),
+      message: "Paystack checkout initialized.",
     });
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.post("/verify", requireAuth, async (req, res, next) => {
+  try {
+    const { reference } = parseOrThrow(verifySchema, req.body);
+    const payment = await prisma.paymentTransaction.findFirst({
+      where: { providerRef: reference, userId: req.auth!.userId },
+    });
+    if (!payment) return res.status(404).json({ success: false, message: "Payment not found" });
+
+    const paystackPayment = await verifyPaystackTransaction(reference);
+    if (paystackPayment.reference !== reference) {
+      return res.status(400).json({ success: false, message: "Payment reference mismatch" });
+    }
+
+    const status = mapPaystackStatus(paystackPayment.status);
+    const result = await prisma.$transaction((tx) => applyPaymentStatus(tx, {
+      paymentId: payment.id,
+      status,
+      provider: "paystack",
+      providerRef: reference,
+      expectedAmount: paystackPayment.amount,
+    }));
+
+    res.json({ success: true, data: paymentResponse(result), message: status === "PAID" ? "Payment verified" : "Payment is not complete" });
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.get("/callback", async (req, res, next) => {
+  try {
+    const { reference } = parseOrThrow(verifySchema, req.query);
+    const payment = await prisma.paymentTransaction.findUnique({ where: { providerRef: reference } });
+    if (!payment) return res.status(404).json({ success: false, message: "Payment not found" });
+    const paystackPayment = await verifyPaystackTransaction(reference);
+    const status = mapPaystackStatus(paystackPayment.status);
+    const result = await prisma.$transaction((tx) => applyPaymentStatus(tx, {
+      paymentId: payment.id,
+      status,
+      provider: "paystack",
+      providerRef: reference,
+      expectedAmount: paystackPayment.amount,
+    }));
+    res.json({ success: true, data: paymentResponse(result), message: status === "PAID" ? "Payment verified" : "Payment is not complete" });
   } catch (e) {
     next(e);
   }
@@ -121,6 +259,45 @@ router.get("/:id", requireAuth, async (req, res, next) => {
 
 router.post("/webhook", async (req, res, next) => {
   try {
+    const paystackSignature = req.headers["x-paystack-signature"];
+    if (paystackSignature) {
+      const rawBody = (req as typeof req & { rawBody?: Buffer }).rawBody;
+      if (!verifyPaystackSignature(rawBody, paystackSignature)) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
+
+      const event = String((req.body as { event?: unknown }).event ?? "");
+      const data = (req.body as { data?: Record<string, unknown> }).data ?? {};
+      const reference = typeof data.reference === "string" ? data.reference : "";
+      const providerEventId = String(data.id ?? `${event}:${reference}`);
+      const amount = typeof data.amount === "number" ? data.amount : undefined;
+      if (!event || !reference) return res.status(400).json({ success: false, message: "Invalid Paystack webhook payload" });
+
+      const existingEvent = await prisma.paymentWebhookEvent.findUnique({ where: { providerEventId } });
+      if (existingEvent) {
+        return res.json({ success: true, data: { processed: false, duplicate: true }, message: "Webhook already processed" });
+      }
+
+      const payment = await prisma.paymentTransaction.findUnique({ where: { providerRef: reference } });
+      if (!payment) return res.status(404).json({ success: false, message: "Payment not found" });
+      const status = event === "charge.success" ? mapPaystackStatus(String(data.status ?? "success")) : mapPaystackStatus(String(data.status ?? "pending"));
+
+      const result = await prisma.$transaction(async (tx) => {
+        await tx.paymentWebhookEvent.create({
+          data: { provider: "paystack", providerEventId, payload: req.body as any },
+        });
+        return applyPaymentStatus(tx, {
+          paymentId: payment.id,
+          status,
+          provider: "paystack",
+          providerRef: reference,
+          expectedAmount: amount,
+        });
+      });
+
+      return res.json({ success: true, data: result, message: "Webhook processed" });
+    }
+
     const expectedToken = `Bearer ${env.webhookSecret}`;
     if (req.headers.authorization !== expectedToken) {
       return res.status(401).json({ success: false, message: "Unauthorized" });
@@ -143,23 +320,7 @@ router.post("/webhook", async (req, res, next) => {
         },
       });
 
-      const payment = await tx.paymentTransaction.update({
-        where: { id: body.paymentId },
-        data: { status: body.status, provider: body.provider },
-      });
-
-      if (payment.verificationId) {
-        await tx.verificationApplication.update({
-          where: { id: payment.verificationId },
-          data: { paymentStatus: body.status === "PAID" ? "PAID" : body.status === "FAILED" ? "FAILED" : "PENDING" },
-        });
-      }
-
-      if (payment.adId && payment.purpose === "AD_PROMOTION" && body.status === "PAID") {
-        await tx.ad.update({ where: { id: payment.adId }, data: { isPromoted: true } });
-      }
-
-      return payment;
+      return applyPaymentStatus(tx, { paymentId: body.paymentId, status: body.status, provider: body.provider });
     });
 
     res.json({ success: true, data: result, message: "Webhook processed" });

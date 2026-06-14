@@ -55,7 +55,12 @@ exports.app.use((0, cors_1.default)({
     allowedHeaders: ["Content-Type", "Authorization"],
     optionsSuccessStatus: 204,
 }));
-exports.app.use(express_1.default.json({ limit: "2mb" }));
+exports.app.use(express_1.default.json({
+    limit: "2mb",
+    verify: (req, _res, buf) => {
+        req.rawBody = Buffer.from(buf);
+    },
+}));
 exports.app.use(requestLogger_1.requestLogger);
 exports.app.use("/uploads", express_1.default.static(path_1.default.resolve("uploads"), {
     immutable: true,

@@ -53,7 +53,12 @@ app.use(cors({
   allowedHeaders: ["Content-Type", "Authorization"],
   optionsSuccessStatus: 204,
 }));
-app.use(express.json({ limit: "2mb" }));
+app.use(express.json({
+  limit: "2mb",
+  verify: (req, _res, buf) => {
+    (req as typeof req & { rawBody?: Buffer }).rawBody = Buffer.from(buf);
+  },
+}));
 app.use(requestLogger);
 app.use(
   "/uploads",
