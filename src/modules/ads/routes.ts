@@ -198,9 +198,7 @@ router.get("/", async (req, res, next) => {
       prisma.ad.findMany({
         where,
         include: {
-          images: imagesLimit
-            ? { take: imagesLimit, orderBy: { createdAt: "asc" } }
-            : true,
+          images: { take: imagesLimit ?? 1, orderBy: { createdAt: "asc" } },
           category: true,
           user: { select: sellerSelect },
         },
@@ -431,6 +429,7 @@ router.get("/:id/reviews", async (req, res, next) => {
       where: { adId: id },
       include: { user: { select: { id: true, fullName: true } } },
       orderBy: { createdAt: "desc" },
+      take: 50,
     });
     res.json({ success: true, data: reviews });
   } catch (e) {
