@@ -8,6 +8,7 @@ const bcrypt_1 = __importDefault(require("bcrypt"));
 const crypto_1 = __importDefault(require("crypto"));
 const resend_1 = require("resend");
 const zod_1 = require("zod");
+const google_auth_library_1 = require("google-auth-library");
 const prisma_1 = require("../../lib/prisma");
 const jwt_1 = require("../../utils/jwt");
 const validation_1 = require("../../utils/validation");
@@ -19,6 +20,7 @@ const TERMS_VERSION = "2026-06-09";
 const PRIVACY_VERSION = "2026-06-09";
 const RESET_PASSWORD_MESSAGE = "If that email exists, a reset link has been sent";
 const resend = env_1.env.resendApiKey ? new resend_1.Resend(env_1.env.resendApiKey) : null;
+const googleClient = env_1.env.googleClientId ? new google_auth_library_1.OAuth2Client(env_1.env.googleClientId) : null;
 const authUserSelect = {
     id: true,
     email: true,
@@ -155,6 +157,66 @@ router.get("/me", auth_1.requireAuth, async (req, res, next) => {
         if (!user)
             return res.status(404).json({ success: false, message: "User not found" });
         res.json({ success: true, data: (0, userResponse_1.toAuthUser)(user) });
+    }
+    catch (e) {
+        next(e);
+    }
+});
+router.post("/google", async (req, res, next) => {
+    try {
+        if (!googleClient || !env_1.env.googleClientId) {
+            return res.status(503).json({ success: false, message: "Google sign-in is not configured" });
+        }
+        const { credential } = (0, validation_1.parseOrThrow)(zod_1.z.object({ credential: zod_1.z.string().min(20) }), req.body);
+        let ticket;
+        try {
+            ticket = await googleClient.verifyIdToken({ idToken: credential, audience: env_1.env.googleClientId });
+        }
+        catch {
+            return res.status(401).json({ success: false, message: "Invalid Google credential" });
+        }
+        const payload = ticket.getPayload();
+        if (!payload || !payload.sub || !payload.email || payload.email_verified === false) {
+            return res.status(401).json({ success: false, message: "Google account could not be verified" });
+        }
+        const email = payload.email.toLowerCase();
+        const googleId = payload.sub;
+        const fullName = payload.name?.trim() || payload.given_name?.trim() || email.split("@")[0];
+        const avatarUrl = typeof payload.picture === "string" ? payload.picture : undefined;
+        let user = await prisma_1.prisma.user.findFirst({
+            where: { OR: [{ googleId }, { email }] },
+            select: { ...authUserSelect, id: true, googleId: true },
+        });
+        if (user) {
+            if (!user.googleId) {
+                user = await prisma_1.prisma.user.update({
+                    where: { id: user.id },
+                    data: { googleId, authProvider: "GOOGLE" },
+                    select: { ...authUserSelect, id: true, googleId: true },
+                });
+            }
+        }
+        else {
+            const acceptedAt = new Date();
+            user = await prisma_1.prisma.user.create({
+                data: {
+                    email,
+                    fullName,
+                    googleId,
+                    authProvider: "GOOGLE",
+                    termsAcceptedAt: acceptedAt,
+                    privacyAcceptedAt: acceptedAt,
+                    termsVersion: TERMS_VERSION,
+                    privacyVersion: PRIVACY_VERSION,
+                    profile: { create: avatarUrl ? { avatarUrl } : {} },
+                },
+                select: { ...authUserSelect, id: true, googleId: true },
+            });
+        }
+        if (user.status === "BANNED")
+            return res.status(403).json({ success: false, message: "This account has been suspended" });
+        const token = (0, jwt_1.signAuthToken)({ userId: user.id, email: user.email, role: user.role });
+        res.json({ success: true, data: { token, user: (0, userResponse_1.toAuthUser)(user) } });
     }
     catch (e) {
         next(e);

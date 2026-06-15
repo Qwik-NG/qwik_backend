@@ -4,6 +4,7 @@ import bcrypt from "bcrypt";
 import crypto from "crypto";
 import { Resend } from "resend";
 import { z } from "zod";
+import { OAuth2Client } from "google-auth-library";
 import { prisma } from "../../lib/prisma";
 import { signAuthToken } from "../../utils/jwt";
 import { parseOrThrow } from "../../utils/validation";
@@ -16,6 +17,7 @@ const TERMS_VERSION = "2026-06-09";
 const PRIVACY_VERSION = "2026-06-09";
 const RESET_PASSWORD_MESSAGE = "If that email exists, a reset link has been sent";
 const resend = env.resendApiKey ? new Resend(env.resendApiKey) : null;
+const googleClient = env.googleClientId ? new OAuth2Client(env.googleClientId) : null;
 const authUserSelect = {
   id: true,
   email: true,
@@ -143,6 +145,68 @@ router.get("/me", requireAuth, async (req, res, next) => {
     res.json({ success: true, data: toAuthUser(user) });
   }
   catch (e) { next(e); }
+});
+
+router.post("/google", async (req, res, next) => {
+  try {
+    if (!googleClient || !env.googleClientId) {
+      return res.status(503).json({ success: false, message: "Google sign-in is not configured" });
+    }
+    const { credential } = parseOrThrow(z.object({ credential: z.string().min(20) }), req.body);
+
+    let ticket;
+    try {
+      ticket = await googleClient.verifyIdToken({ idToken: credential, audience: env.googleClientId });
+    } catch {
+      return res.status(401).json({ success: false, message: "Invalid Google credential" });
+    }
+
+    const payload = ticket.getPayload();
+    if (!payload || !payload.sub || !payload.email || payload.email_verified === false) {
+      return res.status(401).json({ success: false, message: "Google account could not be verified" });
+    }
+
+    const email = payload.email.toLowerCase();
+    const googleId = payload.sub;
+    const fullName = payload.name?.trim() || payload.given_name?.trim() || email.split("@")[0]!;
+    const avatarUrl = typeof payload.picture === "string" ? payload.picture : undefined;
+
+    let user = await prisma.user.findFirst({
+      where: { OR: [{ googleId }, { email }] },
+      select: { ...authUserSelect, id: true, googleId: true },
+    });
+
+    if (user) {
+      if (!user.googleId) {
+        user = await prisma.user.update({
+          where: { id: user.id },
+          data: { googleId, authProvider: "GOOGLE" },
+          select: { ...authUserSelect, id: true, googleId: true },
+        });
+      }
+    } else {
+      const acceptedAt = new Date();
+      user = await prisma.user.create({
+        data: {
+          email,
+          fullName,
+          googleId,
+          authProvider: "GOOGLE",
+          termsAcceptedAt: acceptedAt,
+          privacyAcceptedAt: acceptedAt,
+          termsVersion: TERMS_VERSION,
+          privacyVersion: PRIVACY_VERSION,
+          profile: { create: avatarUrl ? { avatarUrl } : {} },
+        },
+        select: { ...authUserSelect, id: true, googleId: true },
+      });
+    }
+
+    if (user.status === "BANNED") return res.status(403).json({ success: false, message: "This account has been suspended" });
+
+    const token = signAuthToken({ userId: user.id, email: user.email, role: user.role });
+    res.json({ success: true, data: { token, user: toAuthUser(user) } });
+  } catch (e) { next(e); }
 });
 
 export default router;
