@@ -7,6 +7,8 @@ type UserResponseSource = Pick<
   | "fullName"
   | "phone"
   | "location"
+  | "locationState"
+  | "locationArea"
   | "role"
   | "status"
   | "termsAcceptedAt"
@@ -41,6 +43,8 @@ export function toAuthUser(user: UserResponseSource) {
     fullName: user.fullName,
     phone: user.phone,
     location: user.location,
+    locationState: user.locationState,
+    locationArea: user.locationArea,
     role: user.role,
     status: user.status,
     termsAcceptedAt: user.termsAcceptedAt,
@@ -65,6 +69,8 @@ export function toPublicUser(user: UserResponseSource) {
     id: user.id,
     fullName: user.fullName,
     location: user.location,
+    locationState: user.locationState,
+    locationArea: user.locationArea,
     role: user.role,
     status: user.status,
     profile: {

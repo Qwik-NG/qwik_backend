@@ -16,6 +16,8 @@ const sellerSelect = {
     id: true,
     fullName: true,
     location: true,
+    locationState: true,
+    locationArea: true,
     role: true,
     createdAt: true,
     profile: true,
@@ -30,6 +32,8 @@ const publicSellerSelect = {
     id: true,
     fullName: true,
     location: true,
+    locationState: true,
+    locationArea: true,
     createdAt: true,
     profile: true,
     verificationApplications: {
@@ -88,8 +92,8 @@ router.get("/me", auth_1.requireAuth, async (req, res, next) => {
 });
 router.patch("/me", auth_1.requireAuth, async (req, res, next) => {
     try {
-        const b = (0, validation_1.parseOrThrow)(zod_1.z.object({ fullName: zod_1.z.string().min(2).optional(), phone: zod_1.z.string().optional(), location: zod_1.z.string().optional(), bio: zod_1.z.string().optional(), avatarUrl: zod_1.z.string().url().optional() }), req.body);
-        const user = await prisma_1.prisma.user.update({ where: { id: req.auth.userId }, data: { fullName: b.fullName, phone: b.phone, location: b.location, profile: { upsert: { create: { bio: b.bio, avatarUrl: b.avatarUrl }, update: { bio: b.bio, avatarUrl: b.avatarUrl } } } }, include: profileInclude });
+        const b = (0, validation_1.parseOrThrow)(zod_1.z.object({ fullName: zod_1.z.string().min(2).optional(), phone: zod_1.z.string().optional(), location: zod_1.z.string().optional(), locationState: zod_1.z.string().trim().max(100).optional(), locationArea: zod_1.z.string().trim().max(200).optional(), bio: zod_1.z.string().optional(), avatarUrl: zod_1.z.string().url().optional() }), req.body);
+        const user = await prisma_1.prisma.user.update({ where: { id: req.auth.userId }, data: { fullName: b.fullName, phone: b.phone, location: b.location, locationState: b.locationState ?? undefined, locationArea: b.locationArea ?? undefined, profile: { upsert: { create: { bio: b.bio, avatarUrl: b.avatarUrl }, update: { bio: b.bio, avatarUrl: b.avatarUrl } } } }, include: profileInclude });
         res.json({ success: true, data: (0, userResponse_1.toAuthUser)(user) });
     }
     catch (e) {

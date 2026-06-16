@@ -18,6 +18,8 @@ function toAuthUser(user) {
         fullName: user.fullName,
         phone: user.phone,
         location: user.location,
+        locationState: user.locationState,
+        locationArea: user.locationArea,
         role: user.role,
         status: user.status,
         termsAcceptedAt: user.termsAcceptedAt,
@@ -41,6 +43,8 @@ function toPublicUser(user) {
         id: user.id,
         fullName: user.fullName,
         location: user.location,
+        locationState: user.locationState,
+        locationArea: user.locationArea,
         role: user.role,
         status: user.status,
         profile: {

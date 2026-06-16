@@ -12,6 +12,8 @@ const sellerSelect = {
   id: true,
   fullName: true,
   location: true,
+  locationState: true,
+  locationArea: true,
   role: true,
   createdAt: true,
   profile: true,
@@ -26,6 +28,8 @@ const publicSellerSelect = {
   id: true,
   fullName: true,
   location: true,
+  locationState: true,
+  locationArea: true,
   createdAt: true,
   profile: true,
   verificationApplications: {
@@ -80,8 +84,8 @@ router.get("/me", requireAuth, async (req, res, next) => {
 });
 router.patch("/me", requireAuth, async (req, res, next) => {
   try {
-    const b = parseOrThrow(z.object({ fullName: z.string().min(2).optional(), phone: z.string().optional(), location: z.string().optional(), bio: z.string().optional(), avatarUrl: z.string().url().optional() }), req.body);
-    const user = await prisma.user.update({ where: { id: req.auth!.userId }, data: { fullName: b.fullName, phone: b.phone, location: b.location, profile: { upsert: { create: { bio: b.bio, avatarUrl: b.avatarUrl }, update: { bio: b.bio, avatarUrl: b.avatarUrl } } } }, include: profileInclude });
+    const b = parseOrThrow(z.object({ fullName: z.string().min(2).optional(), phone: z.string().optional(), location: z.string().optional(), locationState: z.string().trim().max(100).optional(), locationArea: z.string().trim().max(200).optional(), bio: z.string().optional(), avatarUrl: z.string().url().optional() }), req.body);
+    const user = await prisma.user.update({ where: { id: req.auth!.userId }, data: { fullName: b.fullName, phone: b.phone, location: b.location, locationState: b.locationState ?? undefined, locationArea: b.locationArea ?? undefined, profile: { upsert: { create: { bio: b.bio, avatarUrl: b.avatarUrl }, update: { bio: b.bio, avatarUrl: b.avatarUrl } } } }, include: profileInclude });
     res.json({ success: true, data: toAuthUser(user) });
   } catch (e) { next(e); }
 });

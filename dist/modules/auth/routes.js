@@ -27,6 +27,8 @@ const authUserSelect = {
     fullName: true,
     phone: true,
     location: true,
+    locationState: true,
+    locationArea: true,
     role: true,
     status: true,
     termsAcceptedAt: true,

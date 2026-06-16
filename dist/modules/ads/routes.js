@@ -139,7 +139,10 @@ router.get("/", async (req, res, next) => {
                 },
             ]
             : [];
-        const locationFilters = locationTerms.map((term) => ({ location: { contains: term, mode: "insensitive" } }));
+        const locationFilters = locationTerms.flatMap((term) => [
+            { location: { contains: term, mode: "insensitive" } },
+            { locationState: { contains: term, mode: "insensitive" } },
+        ]);
         const categoryIds = await getCategoryIds({
             categoryId: categoryId || undefined,
             category: category || undefined,
@@ -208,6 +211,8 @@ router.post("/", auth_1.requireAuth, auth_1.requireActiveUser, async (req, res, 
             description: adDescriptionSchema,
             price: zod_1.z.number().nonnegative(),
             location: adLocationSchema,
+            locationState: zod_1.z.string().trim().max(100).optional(),
+            locationArea: zod_1.z.string().trim().max(200).optional(),
             brand: adShortTextSchema.optional(),
             model: adShortTextSchema.optional(),
             condition: adShortTextSchema.optional(),
@@ -229,6 +234,8 @@ router.post("/", auth_1.requireAuth, auth_1.requireActiveUser, async (req, res, 
                 description: b.description,
                 price: b.price,
                 location: b.location,
+                locationState: b.locationState ?? null,
+                locationArea: b.locationArea ?? null,
                 brand: b.brand,
                 model: b.model,
                 condition: b.condition,
@@ -256,6 +263,8 @@ router.patch("/:id", auth_1.requireAuth, auth_1.requireActiveUser, async (req, r
             description: adDescriptionSchema.optional(),
             price: zod_1.z.number().nonnegative().optional(),
             location: adLocationSchema.optional(),
+            locationState: zod_1.z.string().trim().max(100).optional(),
+            locationArea: zod_1.z.string().trim().max(200).optional(),
             brand: adShortTextSchema.optional(),
             model: adShortTextSchema.optional(),
             condition: adShortTextSchema.optional(),

@@ -63,6 +63,8 @@ model User {
   fullName        String
   phone           String?
   location        String?
+  locationState   String?
+  locationArea    String?
   googleId        String?      @unique
   authProvider    String?
   role            UserRole     @default(USER)
@@ -92,6 +94,8 @@ model User {
   followers       Follow[] @relation("UserFollowers")
   resetToken      String?
   resetTokenExpAt DateTime?
+
+  @@index([locationState])
 }
 
 model AdminAuditLog {
