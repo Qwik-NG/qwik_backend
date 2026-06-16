@@ -47,6 +47,9 @@ const adsListQuerySchema = zod_1.z.object({
     subcategory: optionalStringQuery,
     minPrice: optionalNumberQuery,
     maxPrice: optionalNumberQuery,
+    sort: zod_1.z.enum(["newest", "price-low", "price-high"]).optional().default("newest"),
+    condition: optionalStringQuery,
+    brand: optionalStringQuery,
     imagesLimit: optionalLimitedIntegerQuery(10),
 });
 const adInclude = {
@@ -124,12 +127,14 @@ async function getCategoryIds(input) {
 router.get("/", async (req, res, next) => {
     try {
         const query = (0, validation_1.parseOrThrow)(adsListQuerySchema, req.query);
-        const { page, pageSize, minPrice, maxPrice, imagesLimit } = query;
+        const { page, pageSize, minPrice, maxPrice, imagesLimit, sort } = query;
         const search = (query.q || query.search).trim();
         const location = query.location.trim();
         const categoryId = query.categoryId.trim();
         const category = query.category.trim();
         const subcategory = query.subcategory.trim();
+        const condition = query.condition.trim();
+        const brand = query.brand.trim();
         const locationTerms = getLocationSearchTerms(location);
         const searchFilters = search
             ? [
@@ -167,6 +172,8 @@ router.get("/", async (req, res, next) => {
                     },
                 }
                 : {}),
+            ...(condition ? { condition: { contains: condition, mode: "insensitive" } } : {}),
+            ...(brand ? { brand: { contains: brand, mode: "insensitive" } } : {}),
         };
         const [total, ads] = await prisma_1.prisma.$transaction([
             prisma_1.prisma.ad.count({ where }),
@@ -177,7 +184,7 @@ router.get("/", async (req, res, next) => {
                     category: true,
                     user: { select: sellerSelect },
                 },
-                orderBy: { createdAt: "desc" },
+                orderBy: sort === "price-low" ? { price: "asc" } : sort === "price-high" ? { price: "desc" } : { createdAt: "desc" },
                 skip: (page - 1) * pageSize,
                 take: pageSize,
             }),

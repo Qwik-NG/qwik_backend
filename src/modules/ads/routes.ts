@@ -61,6 +61,9 @@ const adsListQuerySchema = z.object({
   subcategory: optionalStringQuery,
   minPrice: optionalNumberQuery,
   maxPrice: optionalNumberQuery,
+  sort: z.enum(["newest", "price-low", "price-high"]).optional().default("newest"),
+  condition: optionalStringQuery,
+  brand: optionalStringQuery,
   imagesLimit: optionalLimitedIntegerQuery(10),
 });
 
@@ -151,12 +154,14 @@ async function getCategoryIds(input: {
 router.get("/", async (req, res, next) => {
   try {
     const query = parseOrThrow(adsListQuerySchema, req.query);
-    const { page, pageSize, minPrice, maxPrice, imagesLimit } = query;
+    const { page, pageSize, minPrice, maxPrice, imagesLimit, sort } = query;
     const search = (query.q || query.search).trim();
     const location = query.location.trim();
     const categoryId = query.categoryId.trim();
     const category = query.category.trim();
     const subcategory = query.subcategory.trim();
+    const condition = query.condition.trim();
+    const brand = query.brand.trim();
     const locationTerms = getLocationSearchTerms(location);
     const searchFilters = search
       ? [
@@ -195,6 +200,8 @@ router.get("/", async (req, res, next) => {
             },
           }
         : {}),
+      ...(condition ? { condition: { contains: condition, mode: "insensitive" as const } } : {}),
+      ...(brand ? { brand: { contains: brand, mode: "insensitive" as const } } : {}),
     };
     const [total, ads] = await prisma.$transaction([
       prisma.ad.count({ where }),
@@ -205,7 +212,7 @@ router.get("/", async (req, res, next) => {
           category: true,
           user: { select: sellerSelect },
         },
-        orderBy: { createdAt: "desc" },
+        orderBy: sort === "price-low" ? { price: "asc" } : sort === "price-high" ? { price: "desc" } : { createdAt: "desc" },
         skip: (page - 1) * pageSize,
         take: pageSize,
       }),
