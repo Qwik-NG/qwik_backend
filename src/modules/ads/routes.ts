@@ -166,7 +166,10 @@ router.get("/", async (req, res, next) => {
           },
         ]
       : [];
-    const locationFilters = locationTerms.map((term) => ({ location: { contains: term, mode: "insensitive" as const } }));
+    const locationFilters = locationTerms.flatMap((term) => [
+      { location:      { contains: term, mode: "insensitive" as const } },
+      { locationState: { contains: term, mode: "insensitive" as const } },
+    ]);
     const categoryIds = await getCategoryIds({
       categoryId: categoryId || undefined,
       category: category || undefined,
@@ -237,6 +240,8 @@ router.post("/", requireAuth, requireActiveUser, async (req, res, next) => {
         description: adDescriptionSchema,
         price: z.number().nonnegative(),
         location: adLocationSchema,
+        locationState: z.string().trim().max(100).optional(),
+        locationArea: z.string().trim().max(200).optional(),
         brand: adShortTextSchema.optional(),
         model: adShortTextSchema.optional(),
         condition: adShortTextSchema.optional(),
@@ -261,6 +266,8 @@ router.post("/", requireAuth, requireActiveUser, async (req, res, next) => {
         description: b.description,
         price: b.price,
         location: b.location,
+        locationState: b.locationState ?? null,
+        locationArea: b.locationArea ?? null,
         brand: b.brand,
         model: b.model,
         condition: b.condition,
@@ -289,6 +296,8 @@ router.patch("/:id", requireAuth, requireActiveUser, async (req, res, next) => {
         description: adDescriptionSchema.optional(),
         price: z.number().nonnegative().optional(),
         location: adLocationSchema.optional(),
+        locationState: z.string().trim().max(100).optional(),
+        locationArea: z.string().trim().max(200).optional(),
         brand: adShortTextSchema.optional(),
         model: adShortTextSchema.optional(),
         condition: adShortTextSchema.optional(),

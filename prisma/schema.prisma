@@ -141,6 +141,8 @@ model Ad {
   description     String
   price           Float
   location        String
+  locationState   String?
+  locationArea    String?
   brand           String?
   model           String?
   condition       String?
@@ -160,6 +162,8 @@ model Ad {
 
   @@index([categoryId])
   @@index([location])
+  @@index([locationState])
+  @@index([locationArea])
   @@index([createdAt])
   @@index([status])
 }
