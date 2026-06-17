@@ -55,7 +55,12 @@ const corsOptions: cors.CorsOptions = {
   optionsSuccessStatus: 204,
 };
 app.use(cors(corsOptions));
-app.options("*", cors(corsOptions));
+app.use((req, res, next) => {
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(204);
+  }
+  return next();
+});
 app.use(express.json({
   limit: "2mb",
   verify: (req, _res, buf) => {

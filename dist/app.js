@@ -57,7 +57,12 @@ const corsOptions = {
     optionsSuccessStatus: 204,
 };
 exports.app.use((0, cors_1.default)(corsOptions));
-exports.app.options("*", (0, cors_1.default)(corsOptions));
+exports.app.use((req, res, next) => {
+    if (req.method === "OPTIONS") {
+        return res.sendStatus(204);
+    }
+    return next();
+});
 exports.app.use(express_1.default.json({
     limit: "2mb",
     verify: (req, _res, buf) => {
