@@ -4,6 +4,20 @@ const express_1 = require("express");
 const prisma_1 = require("../../lib/prisma");
 const auth_1 = require("../../middleware/auth");
 const router = (0, express_1.Router)();
+router.get("/unread-count", auth_1.requireAuth, async (req, res, next) => {
+    try {
+        const count = await prisma_1.prisma.notification.count({
+            where: {
+                userId: req.auth.userId,
+                read: false,
+            },
+        });
+        res.json({ success: true, data: { count } });
+    }
+    catch (e) {
+        next(e);
+    }
+});
 router.get("/", auth_1.requireAuth, async (req, res, next) => {
     try {
         const unreadOnly = String(req.query.unread ?? "").toLowerCase() === "true";

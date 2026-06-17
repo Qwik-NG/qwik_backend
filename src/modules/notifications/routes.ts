@@ -4,6 +4,21 @@ import { requireAuth } from "../../middleware/auth";
 
 const router = Router();
 
+router.get("/unread-count", requireAuth, async (req, res, next) => {
+  try {
+    const count = await prisma.notification.count({
+      where: {
+        userId: req.auth!.userId,
+        read: false,
+      },
+    });
+
+    res.json({ success: true, data: { count } });
+  } catch (e) {
+    next(e);
+  }
+});
+
 router.get("/", requireAuth, async (req, res, next) => {
   try {
     const unreadOnly = String(req.query.unread ?? "").toLowerCase() === "true";
