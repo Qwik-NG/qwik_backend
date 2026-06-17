@@ -53,7 +53,7 @@ const adsListQuerySchema = zod_1.z.object({
     imagesLimit: optionalLimitedIntegerQuery(10),
 });
 const adInclude = {
-    images: true,
+    images: { orderBy: { createdAt: "asc" } },
     category: true,
     user: { select: sellerSelect },
 };

@@ -68,7 +68,7 @@ const adsListQuerySchema = z.object({
 });
 
 const adInclude = {
-  images: true,
+  images: { orderBy: { createdAt: "asc" as const } },
   category: true,
   user: { select: sellerSelect },
 };

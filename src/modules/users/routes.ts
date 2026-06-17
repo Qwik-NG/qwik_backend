@@ -23,7 +23,11 @@ const sellerSelect = {
     select: { id: true, status: true, paymentStatus: true },
   },
 };
-const adInclude = { images: true, category: true, user: { select: sellerSelect } };
+const adInclude = {
+  images: { orderBy: { createdAt: "asc" as const } },
+  category: true,
+  user: { select: sellerSelect },
+};
 const publicSellerSelect = {
   id: true,
   fullName: true,
@@ -38,7 +42,11 @@ const publicSellerSelect = {
     select: { id: true, status: true, paymentStatus: true },
   },
 };
-const publicAdInclude = { images: true, category: true, user: { select: publicSellerSelect } };
+const publicAdInclude = {
+  images: { orderBy: { createdAt: "asc" as const } },
+  category: true,
+  user: { select: publicSellerSelect },
+};
 const profileInclude = {
   profile: true,
   verificationApplications: {
