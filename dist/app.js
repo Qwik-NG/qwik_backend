@@ -12,7 +12,7 @@ const requestLogger_1 = require("./middleware/requestLogger");
 const errors_1 = require("./middleware/errors");
 const routes_1 = __importDefault(require("./routes"));
 exports.app = (0, express_1.default)();
-const frontendOrigins = env_1.env.frontendUrl
+const frontendOrigins = env_1.env.appOrigins
     .split(",")
     .map((origin) => origin.trim().replace(/\/$/, ""))
     .filter(Boolean);
@@ -39,9 +39,9 @@ exports.app.use((_req, res, next) => {
     res.setHeader("Strict-Transport-Security", "max-age=63072000; includeSubDomains");
     next();
 });
-exports.app.use((0, cors_1.default)({
+const corsOptions = {
     origin: (origin, callback) => {
-        // Allow same-origin server checks, any local dev origin, and the configured frontend origin.
+        // Allow server-side checks (no Origin), local dev origins, and configured frontend domains.
         if (!origin ||
             /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin) ||
             frontendOrigins.includes(origin.replace(/\/$/, ""))) {
@@ -53,8 +53,11 @@ exports.app.use((0, cors_1.default)({
     },
     methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: false,
     optionsSuccessStatus: 204,
-}));
+};
+exports.app.use((0, cors_1.default)(corsOptions));
+exports.app.options("*", (0, cors_1.default)(corsOptions));
 exports.app.use(express_1.default.json({
     limit: "2mb",
     verify: (req, _res, buf) => {

@@ -17,7 +17,7 @@ function isLocalOrigin(origin) {
     return !origin || /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin);
 }
 function allowedFrontendOrigins() {
-    return env_1.env.frontendUrl
+    return env_1.env.socketOrigins
         .split(",")
         .map((origin) => origin.trim().replace(/\/$/, ""))
         .filter(Boolean);
@@ -36,6 +36,7 @@ function initRealtime(server) {
                 callback(new Error("Not allowed by CORS"));
             },
             methods: ["GET", "POST"],
+            credentials: false,
         },
     });
     io.use((socket, next) => {
