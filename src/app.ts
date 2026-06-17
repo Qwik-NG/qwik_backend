@@ -7,7 +7,7 @@ import { errorHandler, notFound } from "./middleware/errors";
 import router from "./routes";
 
 export const app = express();
-const frontendOrigins = env.frontendUrl
+const frontendOrigins = env.appOrigins
   .split(",")
   .map((origin) => origin.trim().replace(/\/$/, ""))
   .filter(Boolean);
@@ -36,9 +36,9 @@ app.use((_req, res, next) => {
   res.setHeader("Strict-Transport-Security", "max-age=63072000; includeSubDomains");
   next();
 });
-app.use(cors({ 
+const corsOptions: cors.CorsOptions = {
   origin: (origin, callback) => {
-    // Allow same-origin server checks, any local dev origin, and the configured frontend origin.
+    // Allow server-side checks (no Origin), local dev origins, and configured frontend domains.
     if (
       !origin ||
       /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin) ||
@@ -51,8 +51,11 @@ app.use(cors({
   },
   methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
+  credentials: false,
   optionsSuccessStatus: 204,
-}));
+};
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions));
 app.use(express.json({
   limit: "2mb",
   verify: (req, _res, buf) => {

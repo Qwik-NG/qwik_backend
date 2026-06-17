@@ -23,6 +23,8 @@ export const env = {
   paystackPublicKey: process.env.PAYSTACK_PUBLIC_KEY ?? "",
   paystackCallbackUrl: process.env.PAYSTACK_CALLBACK_URL ?? "",
   frontendUrl: process.env.FRONTEND_URL ?? "http://localhost:5173",
+  appOrigins: process.env.APP_ORIGINS ?? process.env.FRONTEND_URL ?? "http://localhost:5173",
+  socketOrigins: process.env.SOCKET_ORIGINS ?? process.env.FRONTEND_URL ?? "http://localhost:5173",
   publicUrl: process.env.PUBLIC_URL ?? process.env.BACKEND_URL ?? process.env.RENDER_EXTERNAL_URL ?? "",
   resendApiKey: process.env.RESEND_API_KEY ?? "",
   resendFromEmail: process.env.RESEND_FROM_EMAIL ?? "Qwik <onboarding@resend.dev>",

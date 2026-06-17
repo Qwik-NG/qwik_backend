@@ -12,7 +12,7 @@ function isLocalOrigin(origin?: string) {
 }
 
 function allowedFrontendOrigins() {
-  return env.frontendUrl
+  return env.socketOrigins
     .split(",")
     .map((origin) => origin.trim().replace(/\/$/, ""))
     .filter(Boolean);
@@ -33,6 +33,7 @@ export function initRealtime(server: HttpServer) {
         callback(new Error("Not allowed by CORS"));
       },
       methods: ["GET", "POST"],
+      credentials: false,
     },
   });
 
