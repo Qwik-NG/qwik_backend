@@ -1,26 +1,35 @@
 # Qwik Backend
 
 ## Local Setup
+
 1. Copy `.env.example` to `.env` and set real values.
 2. Install dependencies:
+
 ```bash
 npm install
 ```
+
 3. Create a Cloudinary account and copy your cloud name, API key, and API secret into `.env`.
 4. Push schema to database:
+
 ```bash
 npx prisma db push
 ```
+
 5. (Optional) Seed demo data:
+
 ```bash
 npm run seed
 ```
+
 6. Start dev server:
+
 ```bash
 npm run dev
 ```
 
 ## Required Environment Variables
+
 ```env
 DATABASE_URL="postgresql://postgres:password@localhost:5432/qwik_database?schema=public"
 JWT_SECRET="replace_with_a_long_random_secret"
@@ -37,6 +46,7 @@ CLOUDINARY_FOLDER="qwik/ads"
 ```
 
 ## Production (Render)
+
 - Set `DATABASE_URL` to your production Postgres URL.
 - Set a strong random `JWT_SECRET`.
 - Set `FRONTEND_URL` to your primary deployed frontend domain.
@@ -46,11 +56,12 @@ CLOUDINARY_FOLDER="qwik/ads"
 - Optionally set `CLOUDINARY_FOLDER` if you want uploads grouped under a custom folder path.
 
 ## Cloudinary Setup
+
 1. Create or sign in to your Cloudinary account.
 2. Open the Dashboard and copy:
-	- Cloud name
-	- API Key
-	- API Secret
+   - Cloud name
+   - API Key
+   - API Secret
 3. Paste those values into your backend `.env`.
 4. Restart the backend server after updating env vars.
 

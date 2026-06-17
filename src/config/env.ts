@@ -15,6 +15,31 @@ const cloudinaryEnabled =
   hasCloudinaryValue(process.env.CLOUDINARY_API_KEY, "your_api_key") &&
   hasCloudinaryValue(process.env.CLOUDINARY_API_SECRET, "your_api_secret");
 
+const isProduction = process.env.NODE_ENV === "production";
+
+if (isProduction && !cloudinaryEnabled) {
+  const requiredCloudinaryVars = [
+    "CLOUDINARY_CLOUD_NAME",
+    "CLOUDINARY_API_KEY",
+    "CLOUDINARY_API_SECRET",
+  ] as const;
+
+  const missingCloudinaryVars = requiredCloudinaryVars.filter((key) => {
+    const value = process.env[key];
+    if (key === "CLOUDINARY_CLOUD_NAME") {
+      return !hasCloudinaryValue(value, "your_cloud_name");
+    }
+    if (key === "CLOUDINARY_API_KEY") {
+      return !hasCloudinaryValue(value, "your_api_key");
+    }
+    return !hasCloudinaryValue(value, "your_api_secret");
+  });
+
+  throw new Error(
+    `Missing required Cloudinary environment variables for production uploads: ${missingCloudinaryVars.join(", ")}. Set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET before starting the server in production.`,
+  );
+}
+
 const defaultAllowedOrigins = [
   "https://qwik.ng",
   "https://www.qwik.ng",
