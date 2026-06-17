@@ -47,6 +47,17 @@ const publicAdInclude = {
   category: true,
   user: { select: publicSellerSelect },
 };
+const followingSellerSelect = {
+  id: true,
+  fullName: true,
+  location: true,
+  profile: true,
+  _count: {
+    select: {
+      followers: true,
+    },
+  },
+};
 const profileInclude = {
   profile: true,
   verificationApplications: {
@@ -133,9 +144,9 @@ router.patch("/me/notification-settings", requireAuth, async (req, res, next) =>
     res.json({ success: true, data: settings });
   } catch (e) { next(e); }
 });
-router.post("/:id/follow", requireAuth, async (req, res, next) => {
+router.post("/:sellerId/follow", requireAuth, async (req, res, next) => {
   try {
-    const followingId = String(req.params.id);
+    const followingId = String(req.params.sellerId);
     const followerId = req.auth!.userId;
 
     if (followingId === followerId) {
@@ -159,9 +170,9 @@ router.post("/:id/follow", requireAuth, async (req, res, next) => {
     res.status(201).json({ success: true, data: { following: true, stats: { followers, following } } });
   } catch (e) { next(e); }
 });
-router.delete("/:id/follow", requireAuth, async (req, res, next) => {
+router.delete("/:sellerId/follow", requireAuth, async (req, res, next) => {
   try {
-    const followingId = String(req.params.id);
+    const followingId = String(req.params.sellerId);
     const followerId = req.auth!.userId;
 
     await prisma.follow.deleteMany({ where: { followerId, followingId } });
@@ -172,6 +183,57 @@ router.delete("/:id/follow", requireAuth, async (req, res, next) => {
     ]);
 
     res.json({ success: true, data: { following: false, stats: { followers, following } } });
+  } catch (e) { next(e); }
+});
+router.get("/:sellerId/follow-status", requireAuth, async (req, res, next) => {
+  try {
+    const sellerId = String(req.params.sellerId);
+    const followerId = req.auth!.userId;
+
+    const [seller, relationship, followersCount] = await Promise.all([
+      prisma.user.findUnique({ where: { id: sellerId }, select: { id: true } }),
+      prisma.follow.findUnique({
+        where: {
+          followerId_followingId: {
+            followerId,
+            followingId: sellerId,
+          },
+        },
+        select: { id: true },
+      }),
+      prisma.follow.count({ where: { followingId: sellerId } }),
+    ]);
+
+    if (!seller) return res.status(404).json({ success: false, message: "User not found" });
+
+    res.json({
+      success: true,
+      data: {
+        isFollowing: Boolean(relationship),
+        followersCount,
+      },
+    });
+  } catch (e) { next(e); }
+});
+router.get("/me/following", requireAuth, async (req, res, next) => {
+  try {
+    const following = await prisma.follow.findMany({
+      where: { followerId: req.auth!.userId },
+      include: { following: { select: followingSellerSelect } },
+      orderBy: { createdAt: "desc" },
+    });
+
+    res.json({
+      success: true,
+      data: following.map((item) => ({
+        id: item.following.id,
+        fullName: item.following.fullName,
+        location: item.following.location,
+        profile: item.following.profile,
+        followersCount: item.following._count.followers,
+        followedAt: item.createdAt,
+      })),
+    });
   } catch (e) { next(e); }
 });
 router.get("/:id", async (req, res, next) => {
