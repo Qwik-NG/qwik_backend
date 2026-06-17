@@ -10,6 +10,7 @@ const router = (0, express_1.Router)();
 const sellerSelect = {
     id: true,
     fullName: true,
+    phone: true,
     location: true,
     role: true,
     createdAt: true,
