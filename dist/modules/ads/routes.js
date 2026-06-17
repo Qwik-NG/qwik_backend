@@ -3,9 +3,11 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
 const zod_1 = require("zod");
 const prisma_1 = require("../../lib/prisma");
+const realtime_1 = require("../../lib/realtime");
 const validation_1 = require("../../utils/validation");
 const auth_1 = require("../../middleware/auth");
 const paymentPricing_1 = require("../../utils/paymentPricing");
+const notifications_1 = require("../../utils/notifications");
 const router = (0, express_1.Router)();
 const sellerSelect = {
     id: true,
@@ -251,6 +253,20 @@ router.post("/", auth_1.requireAuth, auth_1.requireActiveUser, async (req, res, 
                 images: { createMany: { data: b.imageUrls.map((url) => ({ url })) } },
             },
             include: adInclude,
+        });
+        void (0, notifications_1.createSellerNewAdNotifications)({
+            sellerId: req.auth.userId,
+            sellerName: ad.user.fullName,
+            adId: ad.id,
+            adTitle: ad.title,
+        })
+            .then((notifications) => {
+            notifications.forEach((notification) => {
+                (0, realtime_1.emitNotificationNew)(notification.userId, notification);
+            });
+        })
+            .catch((notificationError) => {
+            console.error("Failed to notify followers about new ad", notificationError);
         });
         res.status(201).json({ success: true, data: ad });
     }

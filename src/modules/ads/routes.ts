@@ -1,9 +1,11 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../../lib/prisma";
+import { emitNotificationNew } from "../../lib/realtime";
 import { parseOrThrow } from "../../utils/validation";
 import { requireActiveUser, requireAuth } from "../../middleware/auth";
 import { getPromotionPaymentAmountKobo, PROMOTION_PLAN_VALUES } from "../../utils/paymentPricing";
+import { createSellerNewAdNotifications } from "../../utils/notifications";
 const router = Router();
 
 const sellerSelect = {
@@ -284,6 +286,22 @@ router.post("/", requireAuth, requireActiveUser, async (req, res, next) => {
       },
       include: adInclude,
     });
+
+    void createSellerNewAdNotifications({
+      sellerId: req.auth!.userId,
+      sellerName: ad.user.fullName,
+      adId: ad.id,
+      adTitle: ad.title,
+    })
+      .then((notifications) => {
+        notifications.forEach((notification) => {
+          emitNotificationNew(notification.userId, notification);
+        });
+      })
+      .catch((notificationError) => {
+        console.error("Failed to notify followers about new ad", notificationError);
+      });
+
     res.status(201).json({ success: true, data: ad });
   } catch (e) {
     next(e);
