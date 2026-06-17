@@ -51,6 +51,9 @@ function resetPasswordUrl(token) {
 }
 async function sendPasswordResetEmail(email, resetToken) {
     if (!resend) {
+        if (env_1.env.isProduction) {
+            throw new Error("Password reset email is not configured in production. Missing RESEND_API_KEY.");
+        }
         console.error("RESEND_API_KEY is not configured; password reset email was not sent");
         return;
     }
@@ -122,6 +125,12 @@ router.post("/login", async (req, res, next) => {
 });
 router.post("/forgot-password", async (req, res, next) => {
     try {
+        if (env_1.env.isProduction && !env_1.env.resendConfigured) {
+            return res.status(503).json({
+                success: false,
+                message: "Password reset email is not configured in production. Set RESEND_API_KEY and RESEND_FROM_EMAIL.",
+            });
+        }
         const { email } = (0, validation_1.parseOrThrow)(zod_1.z.object({ email: zod_1.z.string().email() }), req.body);
         const user = await prisma_1.prisma.user.findUnique({ where: { email: email.toLowerCase() } });
         if (!user)
