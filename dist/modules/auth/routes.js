@@ -74,13 +74,16 @@ async function sendVerificationOtpEmail(email, fullName, otp) {
         throw new Error("Verification email is not configured. Please try again later.");
     }
     const safeName = fullName.trim() || "there";
-    await resend.emails.send({
+    const result = await resend.emails.send({
         from: env_1.env.resendFromEmail,
         to: email,
         subject: "Verify your Qwik email",
         text: `Hi ${safeName},\n\nYour Qwik verification code is: ${otp}\n\nThis code expires in 10 minutes.\n\nDo not share this code with anyone.`,
         html: `<p>Hi ${safeName},</p><p>Your Qwik verification code is:</p><p style="font-size: 24px; font-weight: bold; letter-spacing: 2px; font-family: monospace;">${otp}</p><p>This code expires in 10 minutes.</p><p><strong>Do not share this code with anyone.</strong></p>`,
     });
+    if (result.error) {
+        throw new Error(result.error.message || "Failed to send verification OTP email");
+    }
 }
 async function sendWelcomeEmail(email, fullName) {
     if (!resend) {
