@@ -34,7 +34,7 @@ const cappedPageSizeQuery = zod_1.z.preprocess((value) => {
 }, zod_1.z.coerce.number().int().min(1).default(24));
 const optionalLimitedIntegerQuery = (max) => zod_1.z.preprocess((value) => (value === undefined || value === "" ? undefined : Array.isArray(value) ? value[0] : value), zod_1.z.coerce.number().int().min(1).max(max).optional());
 const adSpecificationsSchema = zod_1.z.record(zod_1.z.string().min(1).max(100), zod_1.z.union([zod_1.z.string().max(500), zod_1.z.number(), zod_1.z.boolean(), zod_1.z.null()])).refine((value) => Object.keys(value).length <= 50, "Specifications cannot include more than 50 fields");
-const adImageUrlsSchema = zod_1.z.array(zod_1.z.string().url().max(2048)).min(4, "Please upload at least 4 product photos.").max(10);
+const adImageUrlsSchema = (0, validation_1.createImageUrlSchema)();
 const adTitleSchema = zod_1.z.string().trim().min(3).max(200);
 const adDescriptionSchema = zod_1.z.string().trim().min(1).max(5000);
 const adLocationSchema = zod_1.z.string().trim().min(2).max(200);
@@ -56,7 +56,7 @@ const adsListQuerySchema = zod_1.z.object({
     imagesLimit: optionalLimitedIntegerQuery(10),
 });
 const adInclude = {
-    images: { orderBy: { createdAt: "asc" } },
+    images: { orderBy: { position: "asc" } },
     category: true,
     user: { select: sellerSelect },
 };
@@ -183,7 +183,7 @@ router.get("/", async (req, res, next) => {
             prisma_1.prisma.ad.findMany({
                 where,
                 include: {
-                    images: { take: imagesLimit ?? 1, orderBy: { createdAt: "asc" } },
+                    images: { take: imagesLimit ?? 1, orderBy: { position: "asc" } },
                     category: true,
                     user: { select: sellerSelect },
                 },
@@ -250,7 +250,7 @@ router.post("/", auth_1.requireAuth, auth_1.requireActiveUser, async (req, res, 
                 model: b.model,
                 condition: b.condition,
                 specifications: b.specifications,
-                images: { createMany: { data: b.imageUrls.map((url) => ({ url })) } },
+                images: { createMany: { data: b.imageUrls.map((url, index) => ({ url, position: index })) } },
             },
             include: adInclude,
         });
@@ -308,7 +308,7 @@ router.patch("/:id", auth_1.requireAuth, auth_1.requireActiveUser, async (req, r
                     where: { id },
                     data: {
                         ...data,
-                        ...(imageUrls ? { images: { createMany: { data: imageUrls.map((url) => ({ url })) } } } : {}),
+                        ...(imageUrls ? { images: { createMany: { data: imageUrls.map((url, index) => ({ url, position: index })) } } } : {}),
                     },
                     include: adInclude,
                 });

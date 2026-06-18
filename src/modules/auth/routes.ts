@@ -92,14 +92,36 @@ async function sendWelcomeEmail(email: string, fullName: string) {
     return;
   }
 
-  const safeName = fullName.trim() || "there";
-
   await resend.emails.send({
     from: env.resendFromEmail,
     to: email,
-    subject: "Welcome to Qwik",
-    text: `Hi ${safeName},\n\nWelcome to Qwik. Your account is ready and you can start exploring listings at ${WELCOME_URL}.\n\nSafety reminder: inspect items before payment, meet sellers in safe public places, and avoid advance payments.\n\nThanks for joining Qwik.`,
-    html: `<p>Hi ${safeName},</p><p>Welcome to Qwik. Your account is ready and you can start exploring listings at <a href="${WELCOME_URL}">${WELCOME_URL}</a>.</p><p><strong>Safety reminder:</strong> inspect items before payment, meet sellers in safe public places, and avoid advance payments.</p><p>Thanks for joining Qwik.</p>`,
+    subject: "Welcome to Qwik.ng! 🎉",
+    text: `Hi there,
+
+Welcome to Qwik.ng — Nigeria's trusted online marketplace.
+
+Your account has been successfully created, and you're now ready to buy, sell, and connect with thousands of users across the country.
+
+🚀 Start by posting your first ad or explore great deals near you.
+
+Thank you for choosing Qwik.ng. We're excited to have you in our growing community!
+
+Happy buying & selling!
+
+— The Qwik.ng Team`,
+    html: `<p>Hi there,</p>
+
+<p>Welcome to Qwik.ng — Nigeria's trusted online marketplace.</p>
+
+<p>Your account has been successfully created, and you're now ready to buy, sell, and connect with thousands of users across the country.</p>
+
+<p>🚀 Start by posting your first ad or explore great deals near you.</p>
+
+<p>Thank you for choosing Qwik.ng. We're excited to have you in our growing community!</p>
+
+<p>Happy buying & selling!</p>
+
+<p>— The Qwik.ng Team</p>`,
   });
 }
 

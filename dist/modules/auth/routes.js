@@ -15,10 +15,12 @@ const validation_1 = require("../../utils/validation");
 const auth_1 = require("../../middleware/auth");
 const userResponse_1 = require("../../utils/userResponse");
 const env_1 = require("../../config/env");
+const otp_1 = require("../../utils/otp");
 const router = (0, express_1.Router)();
 const TERMS_VERSION = "2026-06-09";
 const PRIVACY_VERSION = "2026-06-09";
 const RESET_PASSWORD_MESSAGE = "If that email exists, a reset link has been sent";
+const WELCOME_URL = "https://qwik.ng";
 const resend = env_1.env.resendApiKey ? new resend_1.Resend(env_1.env.resendApiKey) : null;
 const googleClient = env_1.env.googleClientId ? new google_auth_library_1.OAuth2Client(env_1.env.googleClientId) : null;
 const authUserSelect = {
@@ -66,6 +68,66 @@ async function sendPasswordResetEmail(email, resetToken) {
         html: `<p>Use this link to reset your Qwik password:</p><p><a href="${link}">Reset password</a></p><p>This link expires in 30 minutes.</p>`,
     });
 }
+async function sendVerificationOtpEmail(email, fullName, otp) {
+    if (!resend) {
+        console.error("RESEND_API_KEY is not configured; verification OTP email was not sent");
+        throw new Error("Verification email is not configured. Please try again later.");
+    }
+    const safeName = fullName.trim() || "there";
+    await resend.emails.send({
+        from: env_1.env.resendFromEmail,
+        to: email,
+        subject: "Verify your Qwik email",
+        text: `Hi ${safeName},\n\nYour Qwik verification code is: ${otp}\n\nThis code expires in 10 minutes.\n\nDo not share this code with anyone.`,
+        html: `<p>Hi ${safeName},</p><p>Your Qwik verification code is:</p><p style="font-size: 24px; font-weight: bold; letter-spacing: 2px; font-family: monospace;">${otp}</p><p>This code expires in 10 minutes.</p><p><strong>Do not share this code with anyone.</strong></p>`,
+    });
+}
+async function sendWelcomeEmail(email, fullName) {
+    if (!resend) {
+        console.error("Welcome email skipped because Resend is not configured", { email });
+        return;
+    }
+    await resend.emails.send({
+        from: env_1.env.resendFromEmail,
+        to: email,
+        subject: "Welcome to Qwik.ng! 🎉",
+        text: `Hi there,
+
+Welcome to Qwik.ng — Nigeria's trusted online marketplace.
+
+Your account has been successfully created, and you're now ready to buy, sell, and connect with thousands of users across the country.
+
+🚀 Start by posting your first ad or explore great deals near you.
+
+Thank you for choosing Qwik.ng. We're excited to have you in our growing community!
+
+Happy buying & selling!
+
+— The Qwik.ng Team`,
+        html: `<p>Hi there,</p>
+
+<p>Welcome to Qwik.ng — Nigeria's trusted online marketplace.</p>
+
+<p>Your account has been successfully created, and you're now ready to buy, sell, and connect with thousands of users across the country.</p>
+
+<p>🚀 Start by posting your first ad or explore great deals near you.</p>
+
+<p>Thank you for choosing Qwik.ng. We're excited to have you in our growing community!</p>
+
+<p>Happy buying & selling!</p>
+
+<p>— The Qwik.ng Team</p>`,
+    });
+}
+function queueWelcomeEmail(email, fullName, userId) {
+    void sendWelcomeEmail(email, fullName).catch((error) => {
+        console.error("Failed to send welcome email", {
+            userId,
+            email,
+            error: error instanceof Error ? error.message : "Unknown error",
+        });
+    });
+}
 router.post("/register", async (req, res, next) => {
     try {
         const b = (0, validation_1.parseOrThrow)(zod_1.z.object({
@@ -93,12 +155,14 @@ router.post("/register", async (req, res, next) => {
                 privacyAcceptedAt: acceptedAt,
                 termsVersion: TERMS_VERSION,
                 privacyVersion: PRIVACY_VERSION,
+                emailVerifiedAt: null,
                 profile: { create: {} },
             },
             select: authUserSelect,
         });
         const token = (0, jwt_1.signAuthToken)({ userId: user.id, email: user.email, role: user.role });
         res.status(201).json({ success: true, data: { token, user: (0, userResponse_1.toAuthUser)(user) } });
+        queueWelcomeEmail(user.email, user.fullName, user.id);
     }
     catch (e) {
         next(e);
@@ -198,6 +262,7 @@ router.post("/google", async (req, res, next) => {
             where: { OR: [{ googleId }, { email }] },
             select: { ...authUserSelect, id: true, googleId: true },
         });
+        let createdUser = false;
         if (user) {
             if (!user.googleId) {
                 user = await prisma_1.prisma.user.update({
@@ -219,15 +284,178 @@ router.post("/google", async (req, res, next) => {
                     privacyAcceptedAt: acceptedAt,
                     termsVersion: TERMS_VERSION,
                     privacyVersion: PRIVACY_VERSION,
+                    emailVerifiedAt: acceptedAt,
                     profile: { create: avatarUrl ? { avatarUrl } : {} },
                 },
                 select: { ...authUserSelect, id: true, googleId: true },
             });
+            createdUser = true;
         }
         if (user.status === "BANNED")
             return res.status(403).json({ success: false, message: "This account has been suspended" });
         const token = (0, jwt_1.signAuthToken)({ userId: user.id, email: user.email, role: user.role });
         res.json({ success: true, data: { token, user: (0, userResponse_1.toAuthUser)(user) } });
+        if (createdUser) {
+            queueWelcomeEmail(user.email, user.fullName, user.id);
+        }
+    }
+    catch (e) {
+        next(e);
+    }
+});
+router.post("/send-verification-otp", auth_1.requireAuth, async (req, res, next) => {
+    try {
+        const user = await prisma_1.prisma.user.findUnique({
+            where: { id: req.auth.userId },
+            select: { id: true, email: true, fullName: true, emailVerifiedAt: true, emailVerificationOtpLastSentAt: true, emailVerificationOtpLockedUntil: true },
+        });
+        if (!user)
+            return res.status(404).json({ success: false, message: "User not found" });
+        if (user.emailVerifiedAt)
+            return res.status(409).json({ success: false, message: "Email is already verified" });
+        const now = new Date();
+        if (user.emailVerificationOtpLockedUntil && user.emailVerificationOtpLockedUntil > now) {
+            const retrySeconds = Math.ceil((user.emailVerificationOtpLockedUntil.getTime() - now.getTime()) / 1000);
+            return res.status(429).json({ success: false, message: "Too many failed attempts. Please try again later.", retrySeconds });
+        }
+        if (user.emailVerificationOtpLastSentAt) {
+            const timeSinceLastSend = now.getTime() - user.emailVerificationOtpLastSentAt.getTime();
+            if (timeSinceLastSend < otp_1.OTP_RESEND_COOLDOWN_MS) {
+                const retrySeconds = Math.ceil((otp_1.OTP_RESEND_COOLDOWN_MS - timeSinceLastSend) / 1000);
+                return res.status(429).json({ success: false, message: "Please wait before requesting a new code.", retrySeconds });
+            }
+        }
+        const otp = (0, otp_1.generateOtp)();
+        const otpHash = (0, otp_1.hashOtp)(otp);
+        const expiresAt = new Date(now.getTime() + otp_1.OTP_EXPIRY_MS);
+        await prisma_1.prisma.user.update({
+            where: { id: user.id },
+            data: {
+                emailVerificationOtpHash: otpHash,
+                emailVerificationOtpExpiresAt: expiresAt,
+                emailVerificationOtpAttempts: 0,
+                emailVerificationOtpLastSentAt: now,
+                emailVerificationOtpLockedUntil: null,
+            },
+        });
+        try {
+            await sendVerificationOtpEmail(user.email, user.fullName, otp);
+        }
+        catch (emailError) {
+            console.error("Failed to send verification OTP email", { userId: user.id, email: user.email, error: emailError instanceof Error ? emailError.message : "Unknown error" });
+            return res.status(500).json({ success: false, message: "Failed to send verification code. Please try again later." });
+        }
+        res.json({ success: true, message: "Verification code sent to your email" });
+    }
+    catch (e) {
+        next(e);
+    }
+});
+router.post("/resend-verification-otp", auth_1.requireAuth, async (req, res, next) => {
+    try {
+        const user = await prisma_1.prisma.user.findUnique({
+            where: { id: req.auth.userId },
+            select: { id: true, email: true, fullName: true, emailVerifiedAt: true, emailVerificationOtpLastSentAt: true, emailVerificationOtpLockedUntil: true },
+        });
+        if (!user)
+            return res.status(404).json({ success: false, message: "User not found" });
+        if (user.emailVerifiedAt)
+            return res.status(409).json({ success: false, message: "Email is already verified" });
+        const now = new Date();
+        if (user.emailVerificationOtpLockedUntil && user.emailVerificationOtpLockedUntil > now) {
+            const retrySeconds = Math.ceil((user.emailVerificationOtpLockedUntil.getTime() - now.getTime()) / 1000);
+            return res.status(429).json({ success: false, message: "Too many failed attempts. Please try again later.", retrySeconds });
+        }
+        if (user.emailVerificationOtpLastSentAt) {
+            const timeSinceLastSend = now.getTime() - user.emailVerificationOtpLastSentAt.getTime();
+            if (timeSinceLastSend < otp_1.OTP_RESEND_COOLDOWN_MS) {
+                const retrySeconds = Math.ceil((otp_1.OTP_RESEND_COOLDOWN_MS - timeSinceLastSend) / 1000);
+                return res.status(429).json({ success: false, message: "Please wait before requesting a new code.", retrySeconds });
+            }
+        }
+        const otp = (0, otp_1.generateOtp)();
+        const otpHash = (0, otp_1.hashOtp)(otp);
+        const expiresAt = new Date(now.getTime() + otp_1.OTP_EXPIRY_MS);
+        await prisma_1.prisma.user.update({
+            where: { id: user.id },
+            data: {
+                emailVerificationOtpHash: otpHash,
+                emailVerificationOtpExpiresAt: expiresAt,
+                emailVerificationOtpAttempts: 0,
+                emailVerificationOtpLastSentAt: now,
+                emailVerificationOtpLockedUntil: null,
+            },
+        });
+        try {
+            await sendVerificationOtpEmail(user.email, user.fullName, otp);
+        }
+        catch (emailError) {
+            console.error("Failed to send verification OTP email", { userId: user.id, email: user.email, error: emailError instanceof Error ? emailError.message : "Unknown error" });
+            return res.status(500).json({ success: false, message: "Failed to send verification code. Please try again later." });
+        }
+        res.json({ success: true, message: "Verification code resent to your email" });
+    }
+    catch (e) {
+        next(e);
+    }
+});
+router.post("/verify-email-otp", auth_1.requireAuth, async (req, res, next) => {
+    try {
+        const { otp } = (0, validation_1.parseOrThrow)(zod_1.z.object({ otp: zod_1.z.string().regex(/^\d{6}$/, "OTP must be 6 digits") }), req.body);
+        const user = await prisma_1.prisma.user.findUnique({
+            where: { id: req.auth.userId },
+            select: {
+                id: true,
+                email: true,
+                fullName: true,
+                emailVerifiedAt: true,
+                emailVerificationOtpHash: true,
+                emailVerificationOtpExpiresAt: true,
+                emailVerificationOtpAttempts: true,
+                emailVerificationOtpLockedUntil: true,
+            },
+        });
+        if (!user)
+            return res.status(404).json({ success: false, message: "User not found" });
+        if (user.emailVerifiedAt)
+            return res.status(409).json({ success: false, message: "Email is already verified" });
+        const now = new Date();
+        if (user.emailVerificationOtpLockedUntil && user.emailVerificationOtpLockedUntil > now) {
+            const retrySeconds = Math.ceil((user.emailVerificationOtpLockedUntil.getTime() - now.getTime()) / 1000);
+            return res.status(429).json({ success: false, message: "Too many failed attempts. Please try again later.", retrySeconds });
+        }
+        if (!user.emailVerificationOtpHash || !user.emailVerificationOtpExpiresAt) {
+            return res.status(400).json({ success: false, message: "Verification code not found or expired. Please request a new code." });
+        }
+        if (user.emailVerificationOtpExpiresAt < now) {
+            return res.status(400).json({ success: false, message: "Verification code has expired. Please request a new code." });
+        }
+        if (!(0, otp_1.verifyOtp)(otp, user.emailVerificationOtpHash)) {
+            const newAttempts = user.emailVerificationOtpAttempts + 1;
+            const updateData = { emailVerificationOtpAttempts: newAttempts };
+            if (newAttempts >= otp_1.OTP_MAX_ATTEMPTS) {
+                updateData.emailVerificationOtpLockedUntil = new Date(now.getTime() + otp_1.OTP_LOCKOUT_MS);
+            }
+            await prisma_1.prisma.user.update({ where: { id: user.id }, data: updateData });
+            if (newAttempts >= otp_1.OTP_MAX_ATTEMPTS) {
+                const retrySeconds = Math.ceil(otp_1.OTP_LOCKOUT_MS / 1000);
+                return res.status(429).json({ success: false, message: "Too many failed attempts. Please try again later.", retrySeconds });
+            }
+            return res.status(400).json({ success: false, message: "Invalid verification code. Please try again." });
+        }
+        const updatedUser = await prisma_1.prisma.user.update({
+            where: { id: user.id },
+            data: {
+                emailVerifiedAt: now,
+                emailVerificationOtpHash: null,
+                emailVerificationOtpExpiresAt: null,
+                emailVerificationOtpAttempts: 0,
+                emailVerificationOtpLastSentAt: null,
+                emailVerificationOtpLockedUntil: null,
+            },
+            select: authUserSelect,
+        });
+        res.json({ success: true, message: "Email verified successfully", data: (0, userResponse_1.toAuthUser)(updatedUser) });
     }
     catch (e) {
         next(e);
