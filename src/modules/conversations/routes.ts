@@ -295,6 +295,9 @@ router.post("/", requireAuth, requireActiveUser, requireVerifiedEmail, async (re
         conversationId,
         senderId: currentUserId,
         text: body.message.trim(),
+        messageType: body.messageType || "text",
+        offerAmount: body.messageType === "offer" ? body.offerAmount : null,
+        offerStatus: body.messageType === "offer" ? "pending" : null,
       },
       include: messageInclude,
     });

@@ -263,6 +263,9 @@ router.post("/", auth_1.requireAuth, auth_1.requireActiveUser, auth_1.requireVer
                 conversationId,
                 senderId: currentUserId,
                 text: body.message.trim(),
+                messageType: body.messageType || "text",
+                offerAmount: body.messageType === "offer" ? body.offerAmount : null,
+                offerStatus: body.messageType === "offer" ? "pending" : null,
             },
             include: messageInclude,
         });

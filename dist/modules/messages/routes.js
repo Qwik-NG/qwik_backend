@@ -72,6 +72,9 @@ router.post("/", auth_1.requireAuth, auth_1.requireActiveUser, auth_1.requireVer
                 conversationId: body.conversationId,
                 senderId: currentUserId,
                 text: body.text.trim(),
+                messageType: body.messageType || "text",
+                offerAmount: body.messageType === "offer" ? body.offerAmount : null,
+                offerStatus: body.messageType === "offer" ? "pending" : null,
             },
             include: {
                 sender: {
@@ -122,6 +125,83 @@ router.post("/", auth_1.requireAuth, auth_1.requireActiveUser, auth_1.requireVer
             (0, realtime_1.emitUnreadMessageCount)(recipientId, await countUnreadMessages(recipientId));
         }));
         res.status(201).json({ success: true, data: responseMessage });
+    }
+    catch (e) {
+        next(e);
+    }
+});
+// PATCH /messages/:messageId/offer-status
+// Update the status of an offer message (accept/reject)
+router.patch("/:messageId/offer-status", auth_1.requireAuth, async (req, res, next) => {
+    try {
+        const currentUserId = req.auth.userId;
+        const messageId = String(req.params.messageId);
+        const body = (0, validation_1.parseOrThrow)(zod_1.z.object({
+            status: zod_1.z.enum(["accepted", "rejected"]),
+        }), req.body);
+        // Find the message
+        const message = await prisma_1.prisma.message.findUnique({
+            where: { id: messageId },
+            include: {
+                conversation: {
+                    include: {
+                        participants: {
+                            select: { userId: true },
+                        },
+                    },
+                },
+                sender: {
+                    select: userSelect,
+                },
+            },
+        });
+        if (!message) {
+            return res.status(404).json({ success: false, message: "Message not found" });
+        }
+        // Verify user is a participant in the conversation
+        const isParticipant = message.conversation.participants.some((p) => p.userId === currentUserId);
+        if (!isParticipant) {
+            return res.status(403).json({ success: false, message: "Forbidden" });
+        }
+        // Only offer messages can be updated
+        if (message.messageType !== "offer") {
+            return res.status(400).json({ success: false, message: "Only offer messages can be updated" });
+        }
+        // Only pending offers can be accepted/rejected
+        if (message.offerStatus !== "pending") {
+            return res.status(400).json({ success: false, message: "Only pending offers can be updated" });
+        }
+        // Only the receiver (not the sender) can accept/reject
+        if (message.senderId === currentUserId) {
+            return res.status(400).json({ success: false, message: "You cannot accept/reject your own offer" });
+        }
+        // Update the message status
+        const updatedMessage = await prisma_1.prisma.message.update({
+            where: { id: messageId },
+            data: {
+                offerStatus: body.status,
+            },
+            include: {
+                sender: {
+                    select: userSelect,
+                },
+            },
+        });
+        // Get conversation details for realtime emission
+        const conversation = await prisma_1.prisma.conversation.findUnique({
+            where: { id: message.conversationId },
+            include: {
+                participants: {
+                    select: { userId: true },
+                },
+            },
+        });
+        // Emit realtime update to all participants
+        if (conversation) {
+            const participantIds = conversation.participants.map((p) => p.userId);
+            (0, realtime_1.emitMessageNew)(message.conversationId, updatedMessage, participantIds);
+        }
+        res.json({ success: true, data: updatedMessage });
     }
     catch (e) {
         next(e);

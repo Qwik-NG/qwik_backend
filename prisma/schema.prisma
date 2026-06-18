@@ -209,6 +209,9 @@ model Message {
   conversationId String
   senderId       String
   text           String
+  messageType    String       @default("text")
+  offerAmount    Int?
+  offerStatus    String?
   readAt         DateTime?
   createdAt      DateTime     @default(now())
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
@@ -216,6 +219,7 @@ model Message {
 
   @@index([conversationId, createdAt])
   @@index([senderId])
+  @@index([messageType])
 }
 
 model AdImage {
