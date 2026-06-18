@@ -216,8 +216,11 @@ model AdImage {
   id        String   @id @default(cuid())
   adId      String
   url       String
+  position  Int      @default(0)
   createdAt DateTime @default(now())
   ad        Ad       @relation(fields: [adId], references: [id], onDelete: Cascade)
+
+  @@index([adId, position])
 }
 
 model SavedAd {

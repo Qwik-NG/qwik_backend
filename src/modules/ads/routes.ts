@@ -71,7 +71,7 @@ const adsListQuerySchema = z.object({
 });
 
 const adInclude = {
-  images: { orderBy: { createdAt: "asc" as const } },
+  images: { orderBy: { position: "asc" as const } },
   category: true,
   user: { select: sellerSelect },
 };
@@ -211,7 +211,7 @@ router.get("/", async (req, res, next) => {
       prisma.ad.findMany({
         where,
         include: {
-          images: { take: imagesLimit ?? 1, orderBy: { createdAt: "asc" } },
+          images: { take: imagesLimit ?? 1, orderBy: { position: "asc" } },
           category: true,
           user: { select: sellerSelect },
         },
@@ -282,7 +282,7 @@ router.post("/", requireAuth, requireActiveUser, async (req, res, next) => {
         model: b.model,
         condition: b.condition,
         specifications: b.specifications as any,
-        images: { createMany: { data: b.imageUrls.map((url) => ({ url })) } },
+        images: { createMany: { data: b.imageUrls.map((url, index) => ({ url, position: index })) } },
       },
       include: adInclude,
     });
@@ -346,7 +346,7 @@ router.patch("/:id", requireAuth, requireActiveUser, async (req, res, next) => {
           where: { id },
           data: {
             ...data,
-            ...(imageUrls ? { images: { createMany: { data: imageUrls.map((url) => ({ url })) } } } : {}),
+            ...(imageUrls ? { images: { createMany: { data: imageUrls.map((url, index) => ({ url, position: index })) } } } : {}),
           },
           include: adInclude,
         });
