@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../../lib/prisma";
 import { emitNotificationNew } from "../../lib/realtime";
-import { parseOrThrow } from "../../utils/validation";
+import { parseOrThrow, createImageUrlSchema } from "../../utils/validation";
 import { requireActiveUser, requireAuth } from "../../middleware/auth";
 import { getPromotionPaymentAmountKobo, PROMOTION_PLAN_VALUES } from "../../utils/paymentPricing";
 import { createSellerNewAdNotifications } from "../../utils/notifications";
@@ -47,7 +47,7 @@ const adSpecificationsSchema = z.record(
   z.union([z.string().max(500), z.number(), z.boolean(), z.null()]),
 ).refine((value) => Object.keys(value).length <= 50, "Specifications cannot include more than 50 fields");
 
-const adImageUrlsSchema = z.array(z.string().url().max(2048)).min(4, "Please upload at least 4 product photos.").max(10);
+const adImageUrlsSchema = createImageUrlSchema();
 const adTitleSchema = z.string().trim().min(3).max(200);
 const adDescriptionSchema = z.string().trim().min(1).max(5000);
 const adLocationSchema = z.string().trim().min(2).max(200);
