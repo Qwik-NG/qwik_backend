@@ -22,6 +22,7 @@ function toAuthUser(user) {
         locationArea: user.locationArea,
         role: user.role,
         status: user.status,
+        emailVerifiedAt: user.emailVerifiedAt,
         termsAcceptedAt: user.termsAcceptedAt,
         privacyAcceptedAt: user.privacyAcceptedAt,
         termsVersion: user.termsVersion,

@@ -17,6 +17,7 @@ type UserResponseSource = Pick<
   | "privacyVersion"
   | "createdAt"
 > & {
+  emailVerifiedAt?: User["emailVerifiedAt"];
   profile?: Pick<UserProfile, "bio" | "avatarUrl"> | null;
   verificationApplications?: Array<{ id: string; status: string; paymentStatus: string }>;
   _count?: {
@@ -47,6 +48,7 @@ export function toAuthUser(user: UserResponseSource) {
     locationArea: user.locationArea,
     role: user.role,
     status: user.status,
+    emailVerifiedAt: user.emailVerifiedAt,
     termsAcceptedAt: user.termsAcceptedAt,
     privacyAcceptedAt: user.privacyAcceptedAt,
     termsVersion: user.termsVersion,
