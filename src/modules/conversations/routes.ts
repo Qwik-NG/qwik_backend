@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../../lib/prisma";
-import { requireActiveUser, requireAuth } from "../../middleware/auth";
+import { requireActiveUser, requireAuth, requireVerifiedEmail } from "../../middleware/auth";
 import { parseOrThrow } from "../../utils/validation";
 import { createMessageNotification, createOfferNotification } from "../../utils/notifications";
 import { emitConversationUpdated, emitMessageNew, emitNotificationNew, emitUnreadMessageCount } from "../../lib/realtime";
@@ -218,7 +218,7 @@ router.get("/:id", requireAuth, async (req, res, next) => {
   }
 });
 
-router.post("/", requireAuth, requireActiveUser, async (req, res, next) => {
+router.post("/", requireAuth, requireActiveUser, requireVerifiedEmail, async (req, res, next) => {
   try {
     const currentUserId = req.auth!.userId;
     const body = parseOrThrow(

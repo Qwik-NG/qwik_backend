@@ -37,7 +37,7 @@ async function countUnreadMessages(userId) {
         },
     });
 }
-router.post("/", auth_1.requireAuth, auth_1.requireActiveUser, async (req, res, next) => {
+router.post("/", auth_1.requireAuth, auth_1.requireActiveUser, auth_1.requireVerifiedEmail, async (req, res, next) => {
     try {
         const currentUserId = req.auth.userId;
         const body = (0, validation_1.parseOrThrow)(zod_1.z.object({

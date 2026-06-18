@@ -3,7 +3,7 @@ import { z } from "zod";
 import { prisma } from "../../lib/prisma";
 import { emitNotificationNew } from "../../lib/realtime";
 import { parseOrThrow, createImageUrlSchema } from "../../utils/validation";
-import { requireActiveUser, requireAuth } from "../../middleware/auth";
+import { requireActiveUser, requireAuth, requireVerifiedEmail } from "../../middleware/auth";
 import { getPromotionPaymentAmountKobo, PROMOTION_PLAN_VALUES } from "../../utils/paymentPricing";
 import { createSellerNewAdNotifications } from "../../utils/notifications";
 const router = Router();
@@ -241,7 +241,7 @@ router.get("/:id", async (req, res, next) => {
     next(e);
   }
 });
-router.post("/", requireAuth, requireActiveUser, async (req, res, next) => {
+router.post("/", requireAuth, requireActiveUser, requireVerifiedEmail, async (req, res, next) => {
   try {
     const b = parseOrThrow(
       z.object({

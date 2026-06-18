@@ -213,7 +213,7 @@ router.get("/:id", async (req, res, next) => {
         next(e);
     }
 });
-router.post("/", auth_1.requireAuth, auth_1.requireActiveUser, async (req, res, next) => {
+router.post("/", auth_1.requireAuth, auth_1.requireActiveUser, auth_1.requireVerifiedEmail, async (req, res, next) => {
     try {
         const b = (0, validation_1.parseOrThrow)(zod_1.z.object({
             categoryId: zod_1.z.string().min(1),
