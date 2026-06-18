@@ -16,6 +16,7 @@ const router = Router();
 const TERMS_VERSION = "2026-06-09";
 const PRIVACY_VERSION = "2026-06-09";
 const RESET_PASSWORD_MESSAGE = "If that email exists, a reset link has been sent";
+const WELCOME_URL = "https://qwik.ng";
 const resend = env.resendApiKey ? new Resend(env.resendApiKey) : null;
 const googleClient = env.googleClientId ? new OAuth2Client(env.googleClientId) : null;
 const authUserSelect = {
@@ -67,6 +68,33 @@ async function sendPasswordResetEmail(email: string, resetToken: string) {
   });
 }
 
+async function sendWelcomeEmail(email: string, fullName: string) {
+  if (!resend) {
+    console.error("Welcome email skipped because Resend is not configured", { email });
+    return;
+  }
+
+  const safeName = fullName.trim() || "there";
+
+  await resend.emails.send({
+    from: env.resendFromEmail,
+    to: email,
+    subject: "Welcome to Qwik",
+    text: `Hi ${safeName},\n\nWelcome to Qwik. Your account is ready and you can start exploring listings at ${WELCOME_URL}.\n\nSafety reminder: inspect items before payment, meet sellers in safe public places, and avoid advance payments.\n\nThanks for joining Qwik.`,
+    html: `<p>Hi ${safeName},</p><p>Welcome to Qwik. Your account is ready and you can start exploring listings at <a href="${WELCOME_URL}">${WELCOME_URL}</a>.</p><p><strong>Safety reminder:</strong> inspect items before payment, meet sellers in safe public places, and avoid advance payments.</p><p>Thanks for joining Qwik.</p>`,
+  });
+}
+
+function queueWelcomeEmail(email: string, fullName: string, userId: string) {
+  void sendWelcomeEmail(email, fullName).catch((error) => {
+    console.error("Failed to send welcome email", {
+      userId,
+      email,
+      error: error instanceof Error ? error.message : "Unknown error",
+    });
+  });
+}
+
 router.post("/register", async (req, res, next) => {
   try {
     const b = parseOrThrow(z.object({
@@ -99,6 +127,7 @@ router.post("/register", async (req, res, next) => {
     });
     const token = signAuthToken({ userId: user.id, email: user.email, role: user.role });
     res.status(201).json({ success: true, data: { token, user: toAuthUser(user) } });
+    queueWelcomeEmail(user.email, user.fullName, user.id);
   } catch (e) { next(e); }
 });
 
@@ -188,6 +217,8 @@ router.post("/google", async (req, res, next) => {
       select: { ...authUserSelect, id: true, googleId: true },
     });
 
+    let createdUser = false;
+
     if (user) {
       if (!user.googleId) {
         user = await prisma.user.update({
@@ -212,12 +243,16 @@ router.post("/google", async (req, res, next) => {
         },
         select: { ...authUserSelect, id: true, googleId: true },
       });
+      createdUser = true;
     }
 
     if (user.status === "BANNED") return res.status(403).json({ success: false, message: "This account has been suspended" });
 
     const token = signAuthToken({ userId: user.id, email: user.email, role: user.role });
     res.json({ success: true, data: { token, user: toAuthUser(user) } });
+    if (createdUser) {
+      queueWelcomeEmail(user.email, user.fullName, user.id);
+    }
   } catch (e) { next(e); }
 });
 
