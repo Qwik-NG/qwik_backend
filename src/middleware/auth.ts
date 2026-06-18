@@ -41,3 +41,22 @@ export async function requireActiveUser(req: Request, res: Response, next: NextF
     next(e);
   }
 }
+
+export async function requireVerifiedEmail(req: Request, res: Response, next: NextFunction) {
+  if (!req.auth) return res.status(401).json({ success: false, message: "Unauthorized" });
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.auth.userId },
+      select: { emailVerifiedAt: true },
+    });
+
+    if (!user || !user.emailVerifiedAt) {
+      return res.status(403).json({ success: false, message: "Email verification required" });
+    }
+
+    next();
+  } catch (e) {
+    next(e);
+  }
+}

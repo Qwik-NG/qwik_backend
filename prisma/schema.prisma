@@ -94,6 +94,12 @@ model User {
   followers       Follow[] @relation("UserFollowers")
   resetToken      String?
   resetTokenExpAt DateTime?
+  emailVerifiedAt DateTime?
+  emailVerificationOtpHash String?
+  emailVerificationOtpExpiresAt DateTime?
+  emailVerificationOtpAttempts Int @default(0)
+  emailVerificationOtpLastSentAt DateTime?
+  emailVerificationOtpLockedUntil DateTime?
 
   @@index([locationState])
 }

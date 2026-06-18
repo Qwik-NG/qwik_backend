@@ -11,6 +11,7 @@ import { parseOrThrow } from "../../utils/validation";
 import { requireAuth } from "../../middleware/auth";
 import { toAuthUser } from "../../utils/userResponse";
 import { env } from "../../config/env";
+import { generateOtp, hashOtp, verifyOtp, OTP_EXPIRY_MS, OTP_RESEND_COOLDOWN_MS, OTP_MAX_ATTEMPTS, OTP_LOCKOUT_MS } from "../../utils/otp";
 
 const router = Router();
 const TERMS_VERSION = "2026-06-09";
@@ -68,6 +69,23 @@ async function sendPasswordResetEmail(email: string, resetToken: string) {
   });
 }
 
+async function sendVerificationOtpEmail(email: string, fullName: string, otp: string) {
+  if (!resend) {
+    console.error("RESEND_API_KEY is not configured; verification OTP email was not sent");
+    throw new Error("Verification email is not configured. Please try again later.");
+  }
+
+  const safeName = fullName.trim() || "there";
+
+  await resend.emails.send({
+    from: env.resendFromEmail,
+    to: email,
+    subject: "Verify your Qwik email",
+    text: `Hi ${safeName},\n\nYour Qwik verification code is: ${otp}\n\nThis code expires in 10 minutes.\n\nDo not share this code with anyone.`,
+    html: `<p>Hi ${safeName},</p><p>Your Qwik verification code is:</p><p style="font-size: 24px; font-weight: bold; letter-spacing: 2px; font-family: monospace;">${otp}</p><p>This code expires in 10 minutes.</p><p><strong>Do not share this code with anyone.</strong></p>`,
+  });
+}
+
 async function sendWelcomeEmail(email: string, fullName: string) {
   if (!resend) {
     console.error("Welcome email skipped because Resend is not configured", { email });
@@ -121,6 +139,7 @@ router.post("/register", async (req, res, next) => {
         privacyAcceptedAt: acceptedAt,
         termsVersion: TERMS_VERSION,
         privacyVersion: PRIVACY_VERSION,
+        emailVerifiedAt: null,
         profile: { create: {} },
       },
       select: authUserSelect,
@@ -239,6 +258,7 @@ router.post("/google", async (req, res, next) => {
           privacyAcceptedAt: acceptedAt,
           termsVersion: TERMS_VERSION,
           privacyVersion: PRIVACY_VERSION,
+          emailVerifiedAt: acceptedAt,
           profile: { create: avatarUrl ? { avatarUrl } : {} },
         },
         select: { ...authUserSelect, id: true, googleId: true },
@@ -253,6 +273,177 @@ router.post("/google", async (req, res, next) => {
     if (createdUser) {
       queueWelcomeEmail(user.email, user.fullName, user.id);
     }
+  } catch (e) { next(e); }
+});
+
+router.post("/send-verification-otp", requireAuth, async (req, res, next) => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.auth!.userId },
+      select: { id: true, email: true, fullName: true, emailVerifiedAt: true, emailVerificationOtpLastSentAt: true, emailVerificationOtpLockedUntil: true },
+    });
+
+    if (!user) return res.status(404).json({ success: false, message: "User not found" });
+    if (user.emailVerifiedAt) return res.status(409).json({ success: false, message: "Email is already verified" });
+
+    const now = new Date();
+    if (user.emailVerificationOtpLockedUntil && user.emailVerificationOtpLockedUntil > now) {
+      const retrySeconds = Math.ceil((user.emailVerificationOtpLockedUntil.getTime() - now.getTime()) / 1000);
+      return res.status(429).json({ success: false, message: "Too many failed attempts. Please try again later.", retrySeconds });
+    }
+
+    if (user.emailVerificationOtpLastSentAt) {
+      const timeSinceLastSend = now.getTime() - user.emailVerificationOtpLastSentAt.getTime();
+      if (timeSinceLastSend < OTP_RESEND_COOLDOWN_MS) {
+        const retrySeconds = Math.ceil((OTP_RESEND_COOLDOWN_MS - timeSinceLastSend) / 1000);
+        return res.status(429).json({ success: false, message: "Please wait before requesting a new code.", retrySeconds });
+      }
+    }
+
+    const otp = generateOtp();
+    const otpHash = hashOtp(otp);
+    const expiresAt = new Date(now.getTime() + OTP_EXPIRY_MS);
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        emailVerificationOtpHash: otpHash,
+        emailVerificationOtpExpiresAt: expiresAt,
+        emailVerificationOtpAttempts: 0,
+        emailVerificationOtpLastSentAt: now,
+        emailVerificationOtpLockedUntil: null,
+      },
+    });
+
+    try {
+      await sendVerificationOtpEmail(user.email, user.fullName, otp);
+    } catch (emailError) {
+      console.error("Failed to send verification OTP email", { userId: user.id, email: user.email, error: emailError instanceof Error ? emailError.message : "Unknown error" });
+      return res.status(500).json({ success: false, message: "Failed to send verification code. Please try again later." });
+    }
+
+    res.json({ success: true, message: "Verification code sent to your email" });
+  } catch (e) { next(e); }
+});
+
+router.post("/resend-verification-otp", requireAuth, async (req, res, next) => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.auth!.userId },
+      select: { id: true, email: true, fullName: true, emailVerifiedAt: true, emailVerificationOtpLastSentAt: true, emailVerificationOtpLockedUntil: true },
+    });
+
+    if (!user) return res.status(404).json({ success: false, message: "User not found" });
+    if (user.emailVerifiedAt) return res.status(409).json({ success: false, message: "Email is already verified" });
+
+    const now = new Date();
+    if (user.emailVerificationOtpLockedUntil && user.emailVerificationOtpLockedUntil > now) {
+      const retrySeconds = Math.ceil((user.emailVerificationOtpLockedUntil.getTime() - now.getTime()) / 1000);
+      return res.status(429).json({ success: false, message: "Too many failed attempts. Please try again later.", retrySeconds });
+    }
+
+    if (user.emailVerificationOtpLastSentAt) {
+      const timeSinceLastSend = now.getTime() - user.emailVerificationOtpLastSentAt.getTime();
+      if (timeSinceLastSend < OTP_RESEND_COOLDOWN_MS) {
+        const retrySeconds = Math.ceil((OTP_RESEND_COOLDOWN_MS - timeSinceLastSend) / 1000);
+        return res.status(429).json({ success: false, message: "Please wait before requesting a new code.", retrySeconds });
+      }
+    }
+
+    const otp = generateOtp();
+    const otpHash = hashOtp(otp);
+    const expiresAt = new Date(now.getTime() + OTP_EXPIRY_MS);
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        emailVerificationOtpHash: otpHash,
+        emailVerificationOtpExpiresAt: expiresAt,
+        emailVerificationOtpAttempts: 0,
+        emailVerificationOtpLastSentAt: now,
+        emailVerificationOtpLockedUntil: null,
+      },
+    });
+
+    try {
+      await sendVerificationOtpEmail(user.email, user.fullName, otp);
+    } catch (emailError) {
+      console.error("Failed to send verification OTP email", { userId: user.id, email: user.email, error: emailError instanceof Error ? emailError.message : "Unknown error" });
+      return res.status(500).json({ success: false, message: "Failed to send verification code. Please try again later." });
+    }
+
+    res.json({ success: true, message: "Verification code resent to your email" });
+  } catch (e) { next(e); }
+});
+
+router.post("/verify-email-otp", requireAuth, async (req, res, next) => {
+  try {
+    const { otp } = parseOrThrow(z.object({ otp: z.string().regex(/^\d{6}$/, "OTP must be 6 digits") }), req.body);
+
+    const user = await prisma.user.findUnique({
+      where: { id: req.auth!.userId },
+      select: {
+        id: true,
+        email: true,
+        fullName: true,
+        emailVerifiedAt: true,
+        emailVerificationOtpHash: true,
+        emailVerificationOtpExpiresAt: true,
+        emailVerificationOtpAttempts: true,
+        emailVerificationOtpLockedUntil: true,
+      },
+    });
+
+    if (!user) return res.status(404).json({ success: false, message: "User not found" });
+    if (user.emailVerifiedAt) return res.status(409).json({ success: false, message: "Email is already verified" });
+
+    const now = new Date();
+
+    if (user.emailVerificationOtpLockedUntil && user.emailVerificationOtpLockedUntil > now) {
+      const retrySeconds = Math.ceil((user.emailVerificationOtpLockedUntil.getTime() - now.getTime()) / 1000);
+      return res.status(429).json({ success: false, message: "Too many failed attempts. Please try again later.", retrySeconds });
+    }
+
+    if (!user.emailVerificationOtpHash || !user.emailVerificationOtpExpiresAt) {
+      return res.status(400).json({ success: false, message: "Verification code not found or expired. Please request a new code." });
+    }
+
+    if (user.emailVerificationOtpExpiresAt < now) {
+      return res.status(400).json({ success: false, message: "Verification code has expired. Please request a new code." });
+    }
+
+    if (!verifyOtp(otp, user.emailVerificationOtpHash)) {
+      const newAttempts = user.emailVerificationOtpAttempts + 1;
+      const updateData: any = { emailVerificationOtpAttempts: newAttempts };
+
+      if (newAttempts >= OTP_MAX_ATTEMPTS) {
+        updateData.emailVerificationOtpLockedUntil = new Date(now.getTime() + OTP_LOCKOUT_MS);
+      }
+
+      await prisma.user.update({ where: { id: user.id }, data: updateData });
+
+      if (newAttempts >= OTP_MAX_ATTEMPTS) {
+        const retrySeconds = Math.ceil(OTP_LOCKOUT_MS / 1000);
+        return res.status(429).json({ success: false, message: "Too many failed attempts. Please try again later.", retrySeconds });
+      }
+
+      return res.status(400).json({ success: false, message: "Invalid verification code. Please try again." });
+    }
+
+    const updatedUser = await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        emailVerifiedAt: now,
+        emailVerificationOtpHash: null,
+        emailVerificationOtpExpiresAt: null,
+        emailVerificationOtpAttempts: 0,
+        emailVerificationOtpLastSentAt: null,
+        emailVerificationOtpLockedUntil: null,
+      },
+      select: authUserSelect,
+    });
+
+    res.json({ success: true, message: "Email verified successfully", data: toAuthUser(updatedUser) });
   } catch (e) { next(e); }
 });
 
