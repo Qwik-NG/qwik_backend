@@ -7,6 +7,8 @@ import { parseOrThrow } from "../../utils/validation";
 import { getCached, setCached, getCacheKey, invalidateCache, CACHE_TTLS } from "../../lib/admin-cache";
 
 const router = Router();
+const ADMIN_ACCESS_CACHE_TTL_MS = 10_000;
+const adminAccessCache = new Map<string, { role: string; status: string; expiresAt: number }>();
 
 const reportStatusSchema = z.object({
   status: z.enum(["PENDING", "RESOLVED", "DISMISSED"]),
@@ -95,10 +97,26 @@ const requireAdmin = async (req: Request, res: Response, next: NextFunction) => 
       return res.status(401).json({ success: false, message: "Unauthorized" });
     }
 
+    const cached = adminAccessCache.get(req.auth.userId);
+    if (cached && cached.expiresAt > Date.now()) {
+      if (cached.role !== "ADMIN" || cached.status === "BANNED") {
+        return res.status(403).json({ success: false, message: "Admin access required" });
+      }
+      return next();
+    }
+
     const user = await prisma.user.findUnique({
       where: { id: req.auth.userId },
       select: { id: true, role: true, status: true },
     });
+
+    if (user) {
+      adminAccessCache.set(req.auth.userId, {
+        role: user.role,
+        status: user.status,
+        expiresAt: Date.now() + ADMIN_ACCESS_CACHE_TTL_MS,
+      });
+    }
 
     if (!user || user.role !== "ADMIN" || user.status === "BANNED") {
       return res.status(403).json({ success: false, message: "Admin access required" });
@@ -615,6 +633,7 @@ router.post("/users/:id/ban", async (req: Request, res: Response) => {
 
     // Invalidate related caches
     invalidateCache("/admin/users", "/admin/stats", "/admin/audit-log");
+    adminAccessCache.delete(id);
 
     await auditAdminAction(req, "USER_BANNED", "User", id, { reason: user.banReason });
     res.json({ success: true, message: "User banned successfully", data: user });
@@ -638,6 +657,7 @@ router.post("/users/:id/unban", async (req: Request, res: Response) => {
 
     // Invalidate related caches
     invalidateCache("/admin/users", "/admin/stats", "/admin/audit-log");
+    adminAccessCache.delete(id);
 
     await auditAdminAction(req, "USER_UNBANNED", "User", id);
     res.json({ success: true, message: "User restored successfully", data: user });
