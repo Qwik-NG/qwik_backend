@@ -16,6 +16,7 @@ const AD_DETAILS_CACHE_TTL_MS = 30000;
 const MAX_CACHE_ENTRIES = 100;
 const adsListCache = new Map();
 const adDetailsCache = new Map();
+const adsCountCache = new Map();
 function getCachedValue(cache, key) {
     const entry = cache.get(key);
     if (!entry)
@@ -36,6 +37,7 @@ function setCachedValue(cache, key, value, ttlMs) {
 }
 function clearAdCaches(adId) {
     adsListCache.clear();
+    adsCountCache.clear();
     if (adId) {
         adDetailsCache.delete(adId);
         return;
@@ -118,6 +120,13 @@ const cappedPageSizeQuery = zod_1.z.preprocess((value) => {
     return Number.isNaN(numericValue) ? rawValue : Math.min(numericValue, 100);
 }, zod_1.z.coerce.number().int().min(1).default(24));
 const optionalLimitedIntegerQuery = (max) => zod_1.z.preprocess((value) => (value === undefined || value === "" ? undefined : Array.isArray(value) ? value[0] : value), zod_1.z.coerce.number().int().min(1).max(max).optional());
+const optionalBooleanQuery = zod_1.z.preprocess((value) => {
+    if (value === undefined || value === "")
+        return undefined;
+    if (Array.isArray(value))
+        return value[0];
+    return value;
+}, zod_1.z.coerce.boolean().optional());
 const adSpecificationsSchema = zod_1.z.record(zod_1.z.string().min(1).max(100), zod_1.z.union([zod_1.z.string().max(500), zod_1.z.number(), zod_1.z.boolean(), zod_1.z.null()])).refine((value) => Object.keys(value).length <= 50, "Specifications cannot include more than 50 fields");
 const adImageUrlsSchema = (0, validation_1.createImageUrlSchema)();
 const adTitleSchema = zod_1.z.string().trim().min(3).max(200);
@@ -139,6 +148,7 @@ const adsListQuerySchema = zod_1.z.object({
     condition: optionalStringQuery,
     brand: optionalStringQuery,
     imagesLimit: optionalLimitedIntegerQuery(10),
+    includeTotal: optionalBooleanQuery,
 });
 const adListSelect = {
     id: true,
@@ -209,6 +219,66 @@ const adDetailSelect = {
     },
     user: { select: adDetailSellerSelect },
 };
+function asArray(value) {
+    return Array.isArray(value) ? value : [];
+}
+function toJsonObject(value) {
+    return value && typeof value === "object" ? value : {};
+}
+function buildWhereClause(input) {
+    const params = [];
+    const clauses = [];
+    params.push("ACTIVE");
+    clauses.push(`a."status" = CAST($${params.length}::text AS "AdStatus")`);
+    if (input.search) {
+        const term = `%${input.search}%`;
+        params.push(term);
+        const titlePlaceholder = `$${params.length}`;
+        params.push(term);
+        const descPlaceholder = `$${params.length}`;
+        clauses.push(`(a."title" ILIKE ${titlePlaceholder} OR a."description" ILIKE ${descPlaceholder})`);
+    }
+    if (input.locationTerms.length > 0) {
+        const locationOrs = [];
+        for (const term of input.locationTerms) {
+            const wildcard = `%${term}%`;
+            params.push(wildcard);
+            const locationPlaceholder = `$${params.length}`;
+            params.push(wildcard);
+            const statePlaceholder = `$${params.length}`;
+            locationOrs.push(`a."location" ILIKE ${locationPlaceholder}`);
+            locationOrs.push(`a."locationState" ILIKE ${statePlaceholder}`);
+        }
+        clauses.push(`(${locationOrs.join(" OR ")})`);
+    }
+    if (input.categoryIds && input.categoryIds.length > 0) {
+        const placeholders = input.categoryIds.map((id) => {
+            params.push(id);
+            return `$${params.length}`;
+        });
+        clauses.push(`a."categoryId" IN (${placeholders.join(",")})`);
+    }
+    if (input.minPrice !== undefined) {
+        params.push(input.minPrice);
+        clauses.push(`a."price" >= $${params.length}`);
+    }
+    if (input.maxPrice !== undefined) {
+        params.push(input.maxPrice);
+        clauses.push(`a."price" <= $${params.length}`);
+    }
+    if (input.condition) {
+        params.push(`%${input.condition}%`);
+        clauses.push(`a."condition" ILIKE $${params.length}`);
+    }
+    if (input.brand) {
+        params.push(`%${input.brand}%`);
+        clauses.push(`a."brand" ILIKE $${params.length}`);
+    }
+    return {
+        whereSql: clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "",
+        params,
+    };
+}
 const categoryAliases = {
     car: "vehicles",
     cars: "vehicles",
@@ -293,6 +363,7 @@ router.get("/", async (req, res, next) => {
         const subcategory = query.subcategory.trim();
         const condition = query.condition.trim();
         const brand = query.brand.trim();
+        const includeTotal = query.includeTotal === true;
         const locationTerms = getLocationSearchTerms(location);
         const searchFilters = search
             ? [
@@ -311,39 +382,116 @@ router.get("/", async (req, res, next) => {
             category: category || undefined,
             subcategory: subcategory || undefined,
         }));
-        const where = {
-            status: "ACTIVE",
-            ...(searchFilters.length || locationFilters.length
-                ? {
-                    AND: [
-                        ...(searchFilters.length ? [{ OR: searchFilters }] : []),
-                        ...(locationFilters.length ? [{ OR: locationFilters }] : []),
-                    ],
-                }
-                : {}),
-            ...(categoryIds ? { categoryId: { in: categoryIds } } : {}),
-            ...(minPrice !== undefined || maxPrice !== undefined
-                ? {
-                    price: {
-                        ...(minPrice !== undefined ? { gte: minPrice } : {}),
-                        ...(maxPrice !== undefined ? { lte: maxPrice } : {}),
-                    },
-                }
-                : {}),
-            ...(condition ? { condition: { contains: condition, mode: "insensitive" } } : {}),
-            ...(brand ? { brand: { contains: brand, mode: "insensitive" } } : {}),
-        };
-        const [total, ads] = await timePrisma(perf, "ads.list", () => Promise.all([
-            prisma_1.prisma.ad.count({ where }),
-            prisma_1.prisma.ad.findMany({
-                where,
-                select: adListSelect,
-                orderBy: sort === "price-low" ? { price: "asc" } : sort === "price-high" ? { price: "desc" } : { createdAt: "desc" },
-                skip: (page - 1) * pageSize,
-                take: pageSize,
-            }),
-        ]));
-        const payload = { success: true, data: ads, meta: { page, pageSize, total } };
+        const { whereSql, params } = buildWhereClause({
+            search,
+            locationTerms,
+            categoryIds,
+            minPrice,
+            maxPrice,
+            condition,
+            brand,
+        });
+        const sortSql = sort === "price-low" ? `a."price" ASC` : sort === "price-high" ? `a."price" DESC` : `a."createdAt" DESC`;
+        const listParams = [...params];
+        listParams.push(Math.max(1, imagesLimit ?? 1));
+        const imageLimitPlaceholder = `$${listParams.length}`;
+        listParams.push(pageSize);
+        const pageSizePlaceholder = `$${listParams.length}`;
+        listParams.push((page - 1) * pageSize);
+        const offsetPlaceholder = `$${listParams.length}`;
+        const ads = await timePrisma(perf, "ads.list", () => prisma_1.prisma.$queryRawUnsafe(`
+        SELECT
+          a."id",
+          a."title",
+          a."description",
+          a."price",
+          a."location",
+          a."locationState",
+          a."locationArea",
+          a."brand",
+          a."model",
+          a."condition",
+          a."status"::text AS "status",
+          a."isPromoted",
+          a."createdAt",
+          jsonb_build_object(
+            'id', c."id",
+            'name', c."name",
+            'slug', c."slug",
+            'parentId', c."parentId"
+          ) AS "category",
+          COALESCE(img."images", '[]'::jsonb) AS "images",
+          jsonb_build_object(
+            'id', u."id",
+            'fullName', u."fullName",
+            'location', u."location",
+            'locationState', u."locationState",
+            'locationArea', u."locationArea",
+            'role', u."role"::text,
+            'profile', jsonb_build_object('avatarUrl', up."avatarUrl"),
+            'verificationApplications', CASE WHEN va."id" IS NULL THEN '[]'::jsonb ELSE jsonb_build_array(jsonb_build_object('id', va."id", 'status', va."status"::text, 'paymentStatus', va."paymentStatus"::text)) END
+          ) AS "user"
+        FROM "Ad" a
+        JOIN "Category" c ON c."id" = a."categoryId"
+        JOIN "User" u ON u."id" = a."userId"
+        LEFT JOIN "UserProfile" up ON up."userId" = u."id"
+        LEFT JOIN LATERAL (
+          SELECT v."id", v."status", v."paymentStatus"
+          FROM "VerificationApplication" v
+          WHERE v."userId" = u."id"
+          ORDER BY v."createdAt" DESC
+          LIMIT 1
+        ) va ON true
+        LEFT JOIN LATERAL (
+          SELECT COALESCE(
+            jsonb_agg(
+              jsonb_build_object('id', i."id", 'url', i."url", 'position', i."position")
+              ORDER BY i."position" ASC
+            ),
+            '[]'::jsonb
+          ) AS "images"
+          FROM (
+            SELECT i."id", i."url", i."position"
+            FROM "AdImage" i
+            WHERE i."adId" = a."id"
+            ORDER BY i."position" ASC
+            LIMIT ${imageLimitPlaceholder}
+          ) i
+        ) img ON true
+        ${whereSql}
+        ORDER BY ${sortSql}
+        LIMIT ${pageSizePlaceholder}
+        OFFSET ${offsetPlaceholder}
+        `, ...listParams));
+        let total;
+        if (includeTotal) {
+            const countCacheKey = JSON.stringify(params);
+            total = getCachedValue(adsCountCache, countCacheKey) ?? undefined;
+            if (total === undefined) {
+                const countRows = await timePrisma(perf, "ads.count", () => prisma_1.prisma.$queryRawUnsafe(`SELECT COUNT(*)::bigint AS total FROM "Ad" a ${whereSql}`, ...params));
+                total = Number(countRows[0]?.total ?? 0);
+                setCachedValue(adsCountCache, countCacheKey, total, ADS_LIST_CACHE_TTL_MS);
+            }
+        }
+        const normalizedAds = ads.map((row) => ({
+            id: row.id,
+            title: row.title,
+            description: row.description,
+            price: row.price,
+            location: row.location,
+            locationState: row.locationState,
+            locationArea: row.locationArea,
+            brand: row.brand,
+            model: row.model,
+            condition: row.condition,
+            status: row.status,
+            isPromoted: row.isPromoted,
+            createdAt: row.createdAt,
+            category: toJsonObject(row.category),
+            images: asArray(row.images),
+            user: toJsonObject(row.user),
+        }));
+        const payload = { success: true, data: normalizedAds, meta: { page, pageSize, ...(total !== undefined ? { total } : {}) } };
         setCachedValue(adsListCache, req.originalUrl, payload, ADS_LIST_CACHE_TTL_MS);
         return sendTimedJson(perf, res, payload);
     }
@@ -360,13 +508,97 @@ router.get("/:id", async (req, res, next) => {
             perf.cacheHit = true;
             return sendTimedJson(perf, res, cachedResponse);
         }
-        const ad = await timePrisma(perf, "ads.detail", () => prisma_1.prisma.ad.findUnique({
-            where: { id },
-            select: adDetailSelect,
-        }));
+        const rows = await timePrisma(perf, "ads.detail", () => prisma_1.prisma.$queryRawUnsafe(`
+        SELECT
+          a."id",
+          a."userId",
+          a."categoryId",
+          a."title",
+          a."description",
+          a."price",
+          a."location",
+          a."locationState",
+          a."locationArea",
+          a."brand",
+          a."model",
+          a."condition",
+          a."specifications",
+          a."status"::text AS "status",
+          a."isPromoted",
+          a."createdAt",
+          a."updatedAt",
+          jsonb_build_object(
+            'id', c."id",
+            'name', c."name",
+            'slug', c."slug",
+            'parentId', c."parentId"
+          ) AS "category",
+          COALESCE(img."images", '[]'::jsonb) AS "images",
+          jsonb_build_object(
+            'id', u."id",
+            'fullName', u."fullName",
+            'phone', u."phone",
+            'location', u."location",
+            'locationState', u."locationState",
+            'locationArea', u."locationArea",
+            'role', u."role"::text,
+            'createdAt', u."createdAt",
+            'profile', jsonb_build_object('bio', up."bio", 'avatarUrl', up."avatarUrl"),
+            'verificationApplications', CASE WHEN va."id" IS NULL THEN '[]'::jsonb ELSE jsonb_build_array(jsonb_build_object('id', va."id", 'status', va."status"::text, 'paymentStatus', va."paymentStatus"::text)) END
+          ) AS "user"
+        FROM "Ad" a
+        JOIN "Category" c ON c."id" = a."categoryId"
+        JOIN "User" u ON u."id" = a."userId"
+        LEFT JOIN "UserProfile" up ON up."userId" = u."id"
+        LEFT JOIN LATERAL (
+          SELECT v."id", v."status", v."paymentStatus"
+          FROM "VerificationApplication" v
+          WHERE v."userId" = u."id"
+          ORDER BY v."createdAt" DESC
+          LIMIT 1
+        ) va ON true
+        LEFT JOIN LATERAL (
+          SELECT COALESCE(
+            jsonb_agg(
+              jsonb_build_object('id', i."id", 'url', i."url", 'position', i."position")
+              ORDER BY i."position" ASC
+            ),
+            '[]'::jsonb
+          ) AS "images"
+          FROM "AdImage" i
+          WHERE i."adId" = a."id"
+        ) img ON true
+        WHERE a."id" = $1
+        LIMIT 1
+        `, id));
+        const ad = rows[0];
         if (!ad)
             return res.status(404).json({ success: false, message: "Ad not found" });
-        const payload = { success: true, data: ad };
+        const payload = {
+            success: true,
+            data: {
+                id: ad.id,
+                userId: ad.userId,
+                categoryId: ad.categoryId,
+                title: ad.title,
+                description: ad.description,
+                price: ad.price,
+                location: ad.location,
+                locationState: ad.locationState,
+                locationArea: ad.locationArea,
+                brand: ad.brand,
+                model: ad.model,
+                condition: ad.condition,
+                specifications: ad.specifications,
+                status: ad.status,
+                isPromoted: ad.isPromoted,
+                createdAt: ad.createdAt,
+                updatedAt: ad.updatedAt,
+                category: toJsonObject(ad.category),
+                images: asArray(ad.images),
+                user: toJsonObject(ad.user),
+            },
+        };
         setCachedValue(adDetailsCache, id, payload, AD_DETAILS_CACHE_TTL_MS);
         return sendTimedJson(perf, res, payload);
     }
