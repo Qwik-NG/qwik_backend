@@ -32,6 +32,10 @@ const adDeleteSchema = z.object({
   reason: z.string().trim().min(3).max(500).optional(),
 });
 
+const reviewModerationSchema = z.object({
+  reason: z.string().trim().min(3).max(500),
+});
+
 const pageQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(50),
@@ -247,6 +251,78 @@ router.get("/reports", async (req: Request, res: Response) => {
     res.json({ success: true, data: reports, meta: { page, pageSize, total } });
   } catch {
     res.status(500).json({ success: false, message: "Failed to fetch reports" });
+  }
+});
+
+router.get("/reviews", async (req: Request, res: Response) => {
+  try {
+    const { page, pageSize, skip } = getPage(req);
+    const [reviews, total] = await prisma.$transaction([
+      prisma.review.findMany({
+        include: {
+          ad: {
+            select: {
+              id: true,
+              title: true,
+              status: true,
+              user: {
+                select: { id: true, fullName: true, email: true },
+              },
+            },
+          },
+          user: {
+            select: { id: true, fullName: true, email: true },
+          },
+        },
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: pageSize,
+      }),
+      prisma.review.count(),
+    ]);
+
+    res.json({ success: true, data: reviews, meta: { page, pageSize, total } });
+  } catch {
+    res.status(500).json({ success: false, message: "Failed to fetch reviews" });
+  }
+});
+
+router.delete("/reviews/:id", async (req: Request, res: Response) => {
+  try {
+    const id = String(req.params.id);
+    const body = parseOrThrow(reviewModerationSchema, req.body ?? {});
+    const existing = await prisma.review.findUnique({
+      where: { id },
+      include: {
+        ad: {
+          select: {
+            id: true,
+            title: true,
+            user: { select: { id: true, fullName: true, email: true } },
+          },
+        },
+        user: { select: { id: true, fullName: true, email: true } },
+      },
+    });
+    if (!existing) return notFound(res, "Review not found");
+
+    await prisma.review.delete({ where: { id } });
+    await auditAdminAction(req, "REVIEW_DELETED", "Review", id, {
+      adId: existing.adId,
+      adTitle: existing.ad.title,
+      adSellerId: existing.ad.user.id,
+      adSellerName: existing.ad.user.fullName,
+      reviewerId: existing.userId,
+      reviewerName: existing.user.fullName,
+      rating: existing.rating,
+      text: existing.text,
+      reason: body.reason,
+    });
+
+    res.json({ success: true, data: null, message: "Review removed successfully" });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to moderate review";
+    res.status(message.includes("Invalid") ? 400 : 500).json({ success: false, message });
   }
 });
 
