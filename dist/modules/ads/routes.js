@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 const node_perf_hooks_1 = require("node:perf_hooks");
 const express_1 = require("express");
+const client_1 = require("@prisma/client");
 const zod_1 = require("zod");
 const prisma_1 = require("../../lib/prisma");
 const realtime_1 = require("../../lib/realtime");
@@ -66,7 +67,6 @@ function clearAdCaches(adId) {
         adDetailsCache.delete(adId);
         return;
     }
-    adDetailsCache.clear();
 }
 function startRoutePerf(req, label) {
     return {
@@ -853,8 +853,12 @@ router.delete("/:id", auth_1.requireAuth, auth_1.requireActiveUser, async (req, 
 router.post("/:id/save", auth_1.requireAuth, auth_1.requireActiveUser, async (req, res, next) => {
     try {
         const id = String(req.params.id);
-        if (!(await prisma_1.prisma.ad.findUnique({ where: { id }, select: { id: true } })))
+        const ad = await prisma_1.prisma.ad.findUnique({ where: { id }, select: { id: true, userId: true } });
+        if (!ad)
             return res.status(404).json({ success: false, message: "Ad not found" });
+        if (ad.userId === req.auth.userId) {
+            return res.status(403).json({ success: false, message: "You cannot report your own ad" });
+        }
         await prisma_1.prisma.savedAd.upsert({
             where: { userId_adId: { userId: req.auth.userId, adId: id } },
             update: {},
@@ -950,8 +954,11 @@ router.get("/:id/reviews", async (req, res, next) => {
 router.post("/:id/reviews", auth_1.requireAuth, auth_1.requireActiveUser, async (req, res, next) => {
     try {
         const id = String(req.params.id);
-        if (!(await prisma_1.prisma.ad.findUnique({ where: { id }, select: { id: true } })))
+        const ad = await prisma_1.prisma.ad.findUnique({ where: { id }, select: { id: true, userId: true } });
+        if (!ad)
             return res.status(404).json({ success: false, message: "Ad not found" });
+        if (ad.userId === req.auth.userId)
+            return res.status(403).json({ success: false, message: "You cannot review your own ad" });
         const b = (0, validation_1.parseOrThrow)(zod_1.z.object({
             rating: zod_1.z.number().int().min(1).max(5),
             text: zod_1.z.string().min(1),
@@ -974,6 +981,9 @@ router.post("/:id/reviews", auth_1.requireAuth, auth_1.requireActiveUser, async 
         res.status(201).json({ success: true, data: review });
     }
     catch (e) {
+        if (e instanceof client_1.Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+            return res.status(409).json({ success: false, message: "You have already reviewed this ad" });
+        }
         next(e);
     }
 });
@@ -981,8 +991,11 @@ router.post("/:id/reviews", auth_1.requireAuth, auth_1.requireActiveUser, async 
 router.post("/:id/report", auth_1.requireAuth, auth_1.requireActiveUser, async (req, res, next) => {
     try {
         const id = String(req.params.id);
-        if (!(await prisma_1.prisma.ad.findUnique({ where: { id }, select: { id: true } })))
+        const ad = await prisma_1.prisma.ad.findUnique({ where: { id }, select: { id: true, userId: true } });
+        if (!ad)
             return res.status(404).json({ success: false, message: "Ad not found" });
+        if (ad.userId === req.auth.userId)
+            return res.status(403).json({ success: false, message: "You cannot report your own ad" });
         const b = (0, validation_1.parseOrThrow)(zod_1.z.object({
             reason: zod_1.z.string().min(5),
         }), req.body);

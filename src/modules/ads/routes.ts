@@ -1,5 +1,6 @@
 import { performance } from "node:perf_hooks";
 import { Router, type Request, type Response } from "express";
+import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../../lib/prisma";
 import { emitNotificationNew } from "../../lib/realtime";
@@ -107,7 +108,6 @@ function clearAdCaches(adId?: string) {
     adDetailsCache.delete(adId);
     return;
   }
-  adDetailsCache.clear();
 }
 
 function startRoutePerf(req: Request, label: string): RoutePerf {
@@ -119,7 +119,6 @@ function startRoutePerf(req: Request, label: string): RoutePerf {
     startMs: performance.now(),
   };
 }
-
 async function timePrisma<T>(perf: RoutePerf, operation: string, run: () => Promise<T>) {
   const startedAt = performance.now();
   try {
@@ -1041,8 +1040,12 @@ router.delete("/:id", requireAuth, requireActiveUser, async (req, res, next) => 
 router.post("/:id/save", requireAuth, requireActiveUser, async (req, res, next) => {
   try {
     const id = String(req.params.id);
-    if (!(await prisma.ad.findUnique({ where: { id }, select: { id: true } })))
+    const ad = await prisma.ad.findUnique({ where: { id }, select: { id: true, userId: true } });
+    if (!ad)
       return res.status(404).json({ success: false, message: "Ad not found" });
+    if (ad.userId === req.auth!.userId) {
+      return res.status(403).json({ success: false, message: "You cannot report your own ad" });
+    }
     await prisma.savedAd.upsert({
       where: { userId_adId: { userId: req.auth!.userId, adId: id } },
       update: {},
@@ -1142,8 +1145,11 @@ router.get("/:id/reviews", async (req, res, next) => {
 router.post("/:id/reviews", requireAuth, requireActiveUser, async (req, res, next) => {
   try {
     const id = String(req.params.id);
-    if (!(await prisma.ad.findUnique({ where: { id }, select: { id: true } })))
+    const ad = await prisma.ad.findUnique({ where: { id }, select: { id: true, userId: true } });
+    if (!ad)
       return res.status(404).json({ success: false, message: "Ad not found" });
+    if (ad.userId === req.auth!.userId)
+      return res.status(403).json({ success: false, message: "You cannot review your own ad" });
     
     const b = parseOrThrow(
       z.object({
@@ -1169,6 +1175,9 @@ router.post("/:id/reviews", requireAuth, requireActiveUser, async (req, res, nex
     });
     res.status(201).json({ success: true, data: review });
   } catch (e) {
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+      return res.status(409).json({ success: false, message: "You have already reviewed this ad" });
+    }
     next(e);
   }
 });
@@ -1177,8 +1186,11 @@ router.post("/:id/reviews", requireAuth, requireActiveUser, async (req, res, nex
 router.post("/:id/report", requireAuth, requireActiveUser, async (req, res, next) => {
   try {
     const id = String(req.params.id);
-    if (!(await prisma.ad.findUnique({ where: { id }, select: { id: true } })))
+    const ad = await prisma.ad.findUnique({ where: { id }, select: { id: true, userId: true } });
+    if (!ad)
       return res.status(404).json({ success: false, message: "Ad not found" });
+    if (ad.userId === req.auth!.userId)
+      return res.status(403).json({ success: false, message: "You cannot report your own ad" });
     
     const b = parseOrThrow(
       z.object({

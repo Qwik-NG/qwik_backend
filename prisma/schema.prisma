@@ -272,6 +272,7 @@ model Review {
 
   @@index([adId])
   @@index([userId])
+  @@unique([adId, userId])
 }
 
 model Report {
