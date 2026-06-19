@@ -12,12 +12,19 @@ const router = Router();
 const DEV_TIMING_ENABLED = process.env.NODE_ENV !== "production";
 const ADS_LIST_CACHE_TTL_MS = 30_000;
 const AD_DETAILS_CACHE_TTL_MS = 30_000;
+const ADS_LIST_STALE_TTL_MS = 60_000;
+const AD_DETAILS_STALE_TTL_MS = 60_000;
+const ADS_COUNT_STALE_TTL_MS = 60_000;
+const ADS_CACHE_CONTROL_HEADER = "public, max-age=30, stale-while-revalidate=60";
 const MAX_CACHE_ENTRIES = 100;
 
 type CacheEntry<T> = {
-  expiresAt: number;
+  freshUntil: number;
+  staleUntil: number;
   value: T;
 };
+
+type CacheState = "miss" | "fresh" | "stale";
 
 type AdsListPayload = {
   success: true;
@@ -32,6 +39,7 @@ type AdDetailsPayload = {
 
 type RoutePerf = {
   cacheHit: boolean;
+  cacheState: CacheState;
   label: string;
   prismaMs: number;
   startMs: number;
@@ -40,22 +48,56 @@ type RoutePerf = {
 const adsListCache = new Map<string, CacheEntry<AdsListPayload>>();
 const adDetailsCache = new Map<string, CacheEntry<AdDetailsPayload>>();
 const adsCountCache = new Map<string, CacheEntry<number>>();
+const adsListRefreshInFlight = new Set<string>();
+const adDetailsRefreshInFlight = new Set<string>();
+const adsCountRefreshInFlight = new Set<string>();
 
-function getCachedValue<T>(cache: Map<string, CacheEntry<T>>, key: string) {
+function getCachedValue<T>(cache: Map<string, CacheEntry<T>>, key: string): { state: Exclude<CacheState, "miss">; value: T } | null {
   const entry = cache.get(key);
   if (!entry) return null;
-  if (entry.expiresAt <= Date.now()) {
+
+  const now = Date.now();
+  if (entry.staleUntil <= now) {
     cache.delete(key);
     return null;
   }
-  return entry.value;
+
+  if (entry.freshUntil > now) {
+    return { state: "fresh", value: entry.value };
+  }
+
+  return { state: "stale", value: entry.value };
 }
 
-function setCachedValue<T>(cache: Map<string, CacheEntry<T>>, key: string, value: T, ttlMs: number) {
-  cache.set(key, { value, expiresAt: Date.now() + ttlMs });
+function setCachedValue<T>(
+  cache: Map<string, CacheEntry<T>>,
+  key: string,
+  value: T,
+  freshTtlMs: number,
+  staleTtlMs: number,
+) {
+  const now = Date.now();
+  cache.set(key, { value, freshUntil: now + freshTtlMs, staleUntil: now + staleTtlMs });
   if (cache.size <= MAX_CACHE_ENTRIES) return;
   const oldestKey = cache.keys().next().value;
   if (oldestKey) cache.delete(oldestKey);
+}
+
+function runStaleRefresh(
+  inFlight: Set<string>,
+  key: string,
+  label: string,
+  refresh: () => Promise<void>,
+) {
+  if (inFlight.has(key)) return;
+  inFlight.add(key);
+  void refresh()
+    .catch((error) => {
+      console.error(`[perf] stale-refresh-failed ${label}`, error);
+    })
+    .finally(() => {
+      inFlight.delete(key);
+    });
 }
 
 function clearAdCaches(adId?: string) {
@@ -71,6 +113,7 @@ function clearAdCaches(adId?: string) {
 function startRoutePerf(req: Request, label: string): RoutePerf {
   return {
     cacheHit: false,
+    cacheState: "miss",
     label: `${label} ${req.originalUrl}`,
     prismaMs: 0,
     startMs: performance.now(),
@@ -90,14 +133,23 @@ async function timePrisma<T>(perf: RoutePerf, operation: string, run: () => Prom
   }
 }
 
-function sendTimedJson(perf: RoutePerf, res: Response, payload: AdsListPayload | AdDetailsPayload, status = 200) {
+function sendTimedJson(
+  perf: RoutePerf,
+  res: Response,
+  payload: AdsListPayload | AdDetailsPayload,
+  status = 200,
+  cacheControl?: string,
+) {
+  if (cacheControl) {
+    res.setHeader("Cache-Control", cacheControl);
+  }
   const responseStartedAt = performance.now();
   res.status(status).json(payload);
   if (!DEV_TIMING_ENABLED) return;
   const responseMs = performance.now() - responseStartedAt;
   const totalMs = performance.now() - perf.startMs;
   console.log(
-    `[perf] ${perf.label} total=${totalMs.toFixed(1)}ms prisma=${perf.prismaMs.toFixed(1)}ms response=${responseMs.toFixed(1)}ms cache=${perf.cacheHit ? "hit" : "miss"}`,
+    `[perf] ${perf.label} total=${totalMs.toFixed(1)}ms prisma=${perf.prismaMs.toFixed(1)}ms response=${responseMs.toFixed(1)}ms cache=${perf.cacheState}`,
   );
 }
 
@@ -467,189 +519,244 @@ async function getCategoryIds(input: {
   return [category.id, ...category.children.map((child) => child.id)];
 }
 
-router.get("/", async (req, res, next) => {
-  const perf = startRoutePerf(req, "GET /api/ads");
-  try {
-    const cachedResponse = getCachedValue(adsListCache, req.originalUrl);
-    if (cachedResponse) {
-      perf.cacheHit = true;
-      return sendTimedJson(perf, res, cachedResponse);
-    }
+async function buildAdsListPayload(
+  query: z.infer<typeof adsListQuerySchema>,
+  perf?: RoutePerf,
+): Promise<AdsListPayload> {
+  const timed = <T>(operation: string, run: () => Promise<T>) => (perf ? timePrisma(perf, operation, run) : run());
+  const { page, pageSize, minPrice, maxPrice, imagesLimit, sort } = query;
+  const search = (query.q || query.search).trim();
+  const location = query.location.trim();
+  const categoryId = query.categoryId.trim();
+  const category = query.category.trim();
+  const subcategory = query.subcategory.trim();
+  const condition = query.condition.trim();
+  const brand = query.brand.trim();
+  const includeTotal = query.includeTotal === true;
+  const locationTerms = getLocationSearchTerms(location);
 
-    const query = parseOrThrow(adsListQuerySchema, req.query);
-    const { page, pageSize, minPrice, maxPrice, imagesLimit, sort } = query;
-    const search = (query.q || query.search).trim();
-    const location = query.location.trim();
-    const categoryId = query.categoryId.trim();
-    const category = query.category.trim();
-    const subcategory = query.subcategory.trim();
-    const condition = query.condition.trim();
-    const brand = query.brand.trim();
-    const includeTotal = query.includeTotal === true;
-    const locationTerms = getLocationSearchTerms(location);
-    const searchFilters = search
-      ? [
-          { title: { contains: search, mode: "insensitive" as const } },
-          {
-            description: { contains: search, mode: "insensitive" as const },
-          },
-        ]
-      : [];
-    const locationFilters = locationTerms.flatMap((term) => [
-      { location:      { contains: term, mode: "insensitive" as const } },
-      { locationState: { contains: term, mode: "insensitive" as const } },
-    ]);
-    const categoryIds = await timePrisma(perf, "getCategoryIds", () =>
-      getCategoryIds({
-        categoryId: categoryId || undefined,
-        category: category || undefined,
-        subcategory: subcategory || undefined,
-      }),
-    );
+  const categoryIds = await timed("getCategoryIds", () =>
+    getCategoryIds({
+      categoryId: categoryId || undefined,
+      category: category || undefined,
+      subcategory: subcategory || undefined,
+    }),
+  );
 
-    const { whereSql, params } = buildWhereClause({
-      search,
-      locationTerms,
-      categoryIds,
-      minPrice,
-      maxPrice,
-      condition,
-      brand,
-    });
-    const sortSql = sort === "price-low" ? `a."price" ASC` : sort === "price-high" ? `a."price" DESC` : `a."createdAt" DESC`;
-    const listParams = [...params];
-    listParams.push(Math.max(1, imagesLimit ?? 1));
-    const imageLimitPlaceholder = `$${listParams.length}`;
-    listParams.push(pageSize);
-    const pageSizePlaceholder = `$${listParams.length}`;
-    listParams.push((page - 1) * pageSize);
-    const offsetPlaceholder = `$${listParams.length}`;
+  const { whereSql, params } = buildWhereClause({
+    search,
+    locationTerms,
+    categoryIds,
+    minPrice,
+    maxPrice,
+    condition,
+    brand,
+  });
 
-    const ads = await timePrisma(perf, "ads.list", () =>
-      prisma.$queryRawUnsafe<AdsListRow[]>(
-        `
-        SELECT
-          a."id",
-          a."title",
-          a."description",
-          a."price",
-          a."location",
-          a."locationState",
-          a."locationArea",
-          a."brand",
-          a."model",
-          a."condition",
-          a."status"::text AS "status",
-          a."isPromoted",
-          a."createdAt",
-          jsonb_build_object(
-            'id', c."id",
-            'name', c."name",
-            'slug', c."slug",
-            'parentId', c."parentId"
-          ) AS "category",
-          COALESCE(img."images", '[]'::jsonb) AS "images",
-          jsonb_build_object(
-            'id', u."id",
-            'fullName', u."fullName",
-            'location', u."location",
-            'locationState', u."locationState",
-            'locationArea', u."locationArea",
-            'role', u."role"::text,
-            'profile', jsonb_build_object('avatarUrl', up."avatarUrl"),
-            'verificationApplications', CASE WHEN va."id" IS NULL THEN '[]'::jsonb ELSE jsonb_build_array(jsonb_build_object('id', va."id", 'status', va."status"::text, 'paymentStatus', va."paymentStatus"::text)) END
-          ) AS "user"
-        FROM "Ad" a
-        JOIN "Category" c ON c."id" = a."categoryId"
-        JOIN "User" u ON u."id" = a."userId"
-        LEFT JOIN "UserProfile" up ON up."userId" = u."id"
-        LEFT JOIN LATERAL (
-          SELECT v."id", v."status", v."paymentStatus"
-          FROM "VerificationApplication" v
-          WHERE v."userId" = u."id"
-          ORDER BY v."createdAt" DESC
-          LIMIT 1
-        ) va ON true
-        LEFT JOIN LATERAL (
-          SELECT COALESCE(
-            jsonb_agg(
-              jsonb_build_object('id', i."id", 'url', i."url", 'position', i."position")
-              ORDER BY i."position" ASC
-            ),
-            '[]'::jsonb
-          ) AS "images"
-          FROM (
-            SELECT i."id", i."url", i."position"
-            FROM "AdImage" i
-            WHERE i."adId" = a."id"
+  const sortSql = sort === "price-low" ? `a."price" ASC` : sort === "price-high" ? `a."price" DESC` : `a."createdAt" DESC`;
+  const listParams = [...params];
+  listParams.push(Math.max(1, imagesLimit ?? 1));
+  const imageLimitPlaceholder = `$${listParams.length}`;
+  listParams.push(pageSize);
+  const pageSizePlaceholder = `$${listParams.length}`;
+  listParams.push((page - 1) * pageSize);
+  const offsetPlaceholder = `$${listParams.length}`;
+
+  const ads = await timed("ads.list", () =>
+    prisma.$queryRawUnsafe<AdsListRow[]>(
+      `
+      SELECT
+        a."id",
+        a."title",
+        a."description",
+        a."price",
+        a."location",
+        a."locationState",
+        a."locationArea",
+        a."brand",
+        a."model",
+        a."condition",
+        a."status"::text AS "status",
+        a."isPromoted",
+        a."createdAt",
+        jsonb_build_object(
+          'id', c."id",
+          'name', c."name",
+          'slug', c."slug",
+          'parentId', c."parentId"
+        ) AS "category",
+        COALESCE(img."images", '[]'::jsonb) AS "images",
+        jsonb_build_object(
+          'id', u."id",
+          'fullName', u."fullName",
+          'location', u."location",
+          'locationState', u."locationState",
+          'locationArea', u."locationArea",
+          'role', u."role"::text,
+          'profile', jsonb_build_object('avatarUrl', up."avatarUrl"),
+          'verificationApplications', CASE WHEN va."id" IS NULL THEN '[]'::jsonb ELSE jsonb_build_array(jsonb_build_object('id', va."id", 'status', va."status"::text, 'paymentStatus', va."paymentStatus"::text)) END
+        ) AS "user"
+      FROM "Ad" a
+      JOIN "Category" c ON c."id" = a."categoryId"
+      JOIN "User" u ON u."id" = a."userId"
+      LEFT JOIN "UserProfile" up ON up."userId" = u."id"
+      LEFT JOIN LATERAL (
+        SELECT v."id", v."status", v."paymentStatus"
+        FROM "VerificationApplication" v
+        WHERE v."userId" = u."id"
+        ORDER BY v."createdAt" DESC
+        LIMIT 1
+      ) va ON true
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(
+          jsonb_agg(
+            jsonb_build_object('id', i."id", 'url', i."url", 'position', i."position")
             ORDER BY i."position" ASC
-            LIMIT ${imageLimitPlaceholder}
-          ) i
-        ) img ON true
-        ${whereSql}
-        ORDER BY ${sortSql}
-        LIMIT ${pageSizePlaceholder}
-        OFFSET ${offsetPlaceholder}
-        `,
-        ...listParams,
-      ),
-    );
+          ),
+          '[]'::jsonb
+        ) AS "images"
+        FROM (
+          SELECT i."id", i."url", i."position"
+          FROM "AdImage" i
+          WHERE i."adId" = a."id"
+          ORDER BY i."position" ASC
+          LIMIT ${imageLimitPlaceholder}
+        ) i
+      ) img ON true
+      ${whereSql}
+      ORDER BY ${sortSql}
+      LIMIT ${pageSizePlaceholder}
+      OFFSET ${offsetPlaceholder}
+      `,
+      ...listParams,
+    ),
+  );
 
-    let total: number | undefined;
-    if (includeTotal) {
-      const countCacheKey = JSON.stringify(params);
-      total = getCachedValue(adsCountCache, countCacheKey) ?? undefined;
-      if (total === undefined) {
-        const countRows = await timePrisma(perf, "ads.count", () =>
-          prisma.$queryRawUnsafe<Array<{ total: bigint }>>(
+  let total: number | undefined;
+  if (includeTotal) {
+    const countCacheKey = JSON.stringify(params);
+    const cachedCount = getCachedValue(adsCountCache, countCacheKey);
+    if (cachedCount) {
+      total = cachedCount.value;
+      if (cachedCount.state === "stale") {
+        runStaleRefresh(adsCountRefreshInFlight, countCacheKey, `ads.count ${countCacheKey}`, async () => {
+          const countRows = await prisma.$queryRawUnsafe<Array<{ total: bigint }>>(
             `SELECT COUNT(*)::bigint AS total FROM "Ad" a ${whereSql}`,
             ...params,
-          ),
-        );
-        total = Number(countRows[0]?.total ?? 0);
-        setCachedValue(adsCountCache, countCacheKey, total, ADS_LIST_CACHE_TTL_MS);
+          );
+          const refreshedTotal = Number(countRows[0]?.total ?? 0);
+          setCachedValue(adsCountCache, countCacheKey, refreshedTotal, ADS_LIST_CACHE_TTL_MS, ADS_COUNT_STALE_TTL_MS);
+        });
       }
+    } else {
+      const countRows = await timed("ads.count", () =>
+        prisma.$queryRawUnsafe<Array<{ total: bigint }>>(
+          `SELECT COUNT(*)::bigint AS total FROM "Ad" a ${whereSql}`,
+          ...params,
+        ),
+      );
+      total = Number(countRows[0]?.total ?? 0);
+      setCachedValue(adsCountCache, countCacheKey, total, ADS_LIST_CACHE_TTL_MS, ADS_COUNT_STALE_TTL_MS);
     }
-
-    const normalizedAds = ads.map((row) => ({
-      id: row.id,
-      title: row.title,
-      description: row.description,
-      price: row.price,
-      location: row.location,
-      locationState: row.locationState,
-      locationArea: row.locationArea,
-      brand: row.brand,
-      model: row.model,
-      condition: row.condition,
-      status: row.status,
-      isPromoted: row.isPromoted,
-      createdAt: row.createdAt,
-      category: toJsonObject(row.category),
-      images: asArray(row.images),
-      user: toJsonObject(row.user),
-    }));
-
-    const payload: AdsListPayload = { success: true, data: normalizedAds, meta: { page, pageSize, ...(total !== undefined ? { total } : {}) } };
-    setCachedValue(adsListCache, req.originalUrl, payload, ADS_LIST_CACHE_TTL_MS);
-    return sendTimedJson(perf, res, payload);
-  } catch (e) {
-    next(e);
   }
-});
 
-router.get("/:id", async (req, res, next) => {
-  const perf = startRoutePerf(req, "GET /api/ads/:id");
-  try {
-    const id = String(req.params.id);
-    const cachedResponse = getCachedValue(adDetailsCache, id);
-    if (cachedResponse) {
-      perf.cacheHit = true;
-      return sendTimedJson(perf, res, cachedResponse);
-    }
+  const normalizedAds = ads.map((row) => ({
+    id: row.id,
+    title: row.title,
+    description: row.description,
+    price: row.price,
+    location: row.location,
+    locationState: row.locationState,
+    locationArea: row.locationArea,
+    brand: row.brand,
+    model: row.model,
+    condition: row.condition,
+    status: row.status,
+    isPromoted: row.isPromoted,
+    createdAt: row.createdAt,
+    category: toJsonObject(row.category),
+    images: asArray(row.images),
+    user: toJsonObject(row.user),
+  }));
 
-    const rows = await timePrisma(perf, "ads.detail", () =>
-      prisma.$queryRawUnsafe<AdDetailRow[]>(
+  return {
+    success: true,
+    data: normalizedAds,
+    meta: { page, pageSize, ...(total !== undefined ? { total } : {}) },
+  };
+}
+
+async function buildAdDetailsPayload(id: string, perf?: RoutePerf): Promise<AdDetailsPayload | null> {
+  const rows = perf
+    ? await timePrisma(perf, "ads.detail", () =>
+        prisma.$queryRawUnsafe<AdDetailRow[]>(
+          `
+          SELECT
+            a."id",
+            a."userId",
+            a."categoryId",
+            a."title",
+            a."description",
+            a."price",
+            a."location",
+            a."locationState",
+            a."locationArea",
+            a."brand",
+            a."model",
+            a."condition",
+            a."specifications",
+            a."status"::text AS "status",
+            a."isPromoted",
+            a."createdAt",
+            a."updatedAt",
+            jsonb_build_object(
+              'id', c."id",
+              'name', c."name",
+              'slug', c."slug",
+              'parentId', c."parentId"
+            ) AS "category",
+            COALESCE(img."images", '[]'::jsonb) AS "images",
+            jsonb_build_object(
+              'id', u."id",
+              'fullName', u."fullName",
+              'phone', u."phone",
+              'location', u."location",
+              'locationState', u."locationState",
+              'locationArea', u."locationArea",
+              'role', u."role"::text,
+              'createdAt', u."createdAt",
+              'profile', jsonb_build_object('bio', up."bio", 'avatarUrl', up."avatarUrl"),
+              'verificationApplications', CASE WHEN va."id" IS NULL THEN '[]'::jsonb ELSE jsonb_build_array(jsonb_build_object('id', va."id", 'status', va."status"::text, 'paymentStatus', va."paymentStatus"::text)) END
+            ) AS "user"
+          FROM "Ad" a
+          JOIN "Category" c ON c."id" = a."categoryId"
+          JOIN "User" u ON u."id" = a."userId"
+          LEFT JOIN "UserProfile" up ON up."userId" = u."id"
+          LEFT JOIN LATERAL (
+            SELECT v."id", v."status", v."paymentStatus"
+            FROM "VerificationApplication" v
+            WHERE v."userId" = u."id"
+            ORDER BY v."createdAt" DESC
+            LIMIT 1
+          ) va ON true
+          LEFT JOIN LATERAL (
+            SELECT COALESCE(
+              jsonb_agg(
+                jsonb_build_object('id', i."id", 'url', i."url", 'position', i."position")
+                ORDER BY i."position" ASC
+              ),
+              '[]'::jsonb
+            ) AS "images"
+            FROM "AdImage" i
+            WHERE i."adId" = a."id"
+          ) img ON true
+          WHERE a."id" = $1
+          LIMIT 1
+          `,
+          id,
+        ),
+      )
+    : await prisma.$queryRawUnsafe<AdDetailRow[]>(
         `
         SELECT
           a."id",
@@ -669,12 +776,7 @@ router.get("/:id", async (req, res, next) => {
           a."isPromoted",
           a."createdAt",
           a."updatedAt",
-          jsonb_build_object(
-            'id', c."id",
-            'name', c."name",
-            'slug', c."slug",
-            'parentId', c."parentId"
-          ) AS "category",
+          jsonb_build_object('id', c."id", 'name', c."name", 'slug', c."slug", 'parentId', c."parentId") AS "category",
           COALESCE(img."images", '[]'::jsonb) AS "images",
           jsonb_build_object(
             'id', u."id",
@@ -714,38 +816,90 @@ router.get("/:id", async (req, res, next) => {
         LIMIT 1
         `,
         id,
-      ),
-    );
-    const ad = rows[0];
-    if (!ad)
+      );
+
+  const ad = rows[0];
+  if (!ad) return null;
+  return {
+    success: true,
+    data: {
+      id: ad.id,
+      userId: ad.userId,
+      categoryId: ad.categoryId,
+      title: ad.title,
+      description: ad.description,
+      price: ad.price,
+      location: ad.location,
+      locationState: ad.locationState,
+      locationArea: ad.locationArea,
+      brand: ad.brand,
+      model: ad.model,
+      condition: ad.condition,
+      specifications: ad.specifications,
+      status: ad.status,
+      isPromoted: ad.isPromoted,
+      createdAt: ad.createdAt,
+      updatedAt: ad.updatedAt,
+      category: toJsonObject(ad.category),
+      images: asArray(ad.images),
+      user: toJsonObject(ad.user),
+    },
+  };
+}
+
+router.get("/", async (req, res, next) => {
+  const perf = startRoutePerf(req, "GET /api/ads");
+  try {
+    const query = parseOrThrow(adsListQuerySchema, req.query);
+    const cacheKey = req.originalUrl;
+    const cachedResponse = getCachedValue(adsListCache, cacheKey);
+    if (cachedResponse) {
+      perf.cacheHit = true;
+      perf.cacheState = cachedResponse.state;
+      if (cachedResponse.state === "stale") {
+        runStaleRefresh(adsListRefreshInFlight, cacheKey, `ads.list ${cacheKey}`, async () => {
+          const refreshed = await buildAdsListPayload(query);
+          setCachedValue(adsListCache, cacheKey, refreshed, ADS_LIST_CACHE_TTL_MS, ADS_LIST_STALE_TTL_MS);
+        });
+      }
+      return sendTimedJson(perf, res, cachedResponse.value, 200, ADS_CACHE_CONTROL_HEADER);
+    }
+    perf.cacheState = "miss";
+    const payload = await buildAdsListPayload(query, perf);
+    setCachedValue(adsListCache, cacheKey, payload, ADS_LIST_CACHE_TTL_MS, ADS_LIST_STALE_TTL_MS);
+    return sendTimedJson(perf, res, payload, 200, ADS_CACHE_CONTROL_HEADER);
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.get("/:id", async (req, res, next) => {
+  const perf = startRoutePerf(req, "GET /api/ads/:id");
+  try {
+    const id = String(req.params.id);
+    const cachedResponse = getCachedValue(adDetailsCache, id);
+    if (cachedResponse) {
+      perf.cacheHit = true;
+      perf.cacheState = cachedResponse.state;
+      if (cachedResponse.state === "stale") {
+        runStaleRefresh(adDetailsRefreshInFlight, id, `ads.detail ${id}`, async () => {
+          const refreshed = await buildAdDetailsPayload(id);
+          if (refreshed) {
+            setCachedValue(adDetailsCache, id, refreshed, AD_DETAILS_CACHE_TTL_MS, AD_DETAILS_STALE_TTL_MS);
+          } else {
+            adDetailsCache.delete(id);
+          }
+        });
+      }
+      return sendTimedJson(perf, res, cachedResponse.value, 200, ADS_CACHE_CONTROL_HEADER);
+    }
+
+    perf.cacheState = "miss";
+    const payload = await buildAdDetailsPayload(id, perf);
+    if (!payload)
       return res.status(404).json({ success: false, message: "Ad not found" });
-    const payload: AdDetailsPayload = {
-      success: true,
-      data: {
-        id: ad.id,
-        userId: ad.userId,
-        categoryId: ad.categoryId,
-        title: ad.title,
-        description: ad.description,
-        price: ad.price,
-        location: ad.location,
-        locationState: ad.locationState,
-        locationArea: ad.locationArea,
-        brand: ad.brand,
-        model: ad.model,
-        condition: ad.condition,
-        specifications: ad.specifications,
-        status: ad.status,
-        isPromoted: ad.isPromoted,
-        createdAt: ad.createdAt,
-        updatedAt: ad.updatedAt,
-        category: toJsonObject(ad.category),
-        images: asArray(ad.images),
-        user: toJsonObject(ad.user),
-      },
-    };
-    setCachedValue(adDetailsCache, id, payload, AD_DETAILS_CACHE_TTL_MS);
-    return sendTimedJson(perf, res, payload);
+    setCachedValue(adDetailsCache, id, payload, AD_DETAILS_CACHE_TTL_MS, AD_DETAILS_STALE_TTL_MS);
+    return sendTimedJson(perf, res, payload, 200, ADS_CACHE_CONTROL_HEADER);
   } catch (e) {
     next(e);
   }

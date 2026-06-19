@@ -5,14 +5,20 @@ import { prisma } from "../../lib/prisma";
 const router = Router();
 const DEV_TIMING_ENABLED = process.env.NODE_ENV !== "production";
 const CATEGORIES_CACHE_TTL_MS = 5 * 60_000;
+const CATEGORIES_STALE_TTL_MS = 10 * 60_000;
+const CATEGORIES_CACHE_CONTROL_HEADER = "public, max-age=300, stale-while-revalidate=600";
 
 type CacheEntry<T> = {
-  expiresAt: number;
+  freshUntil: number;
+  staleUntil: number;
   value: T;
 };
 
+type CacheState = "miss" | "fresh" | "stale";
+
 type RoutePerf = {
   cacheHit: boolean;
+  cacheState: CacheState;
   label: string;
   prismaMs: number;
   startMs: number;
@@ -20,24 +26,43 @@ type RoutePerf = {
 
 const categoriesListCache = new Map<string, CacheEntry<{ success: true; data: unknown }>>();
 const categoryBySlugCache = new Map<string, CacheEntry<{ success: true; data: unknown }>>();
+const categoryRefreshInFlight = new Set<string>();
 
-function getCachedValue<T>(cache: Map<string, CacheEntry<T>>, key: string) {
+function getCachedValue<T>(cache: Map<string, CacheEntry<T>>, key: string): { state: Exclude<CacheState, "miss">; value: T } | null {
   const entry = cache.get(key);
   if (!entry) return null;
-  if (entry.expiresAt <= Date.now()) {
+  const now = Date.now();
+  if (entry.staleUntil <= now) {
     cache.delete(key);
     return null;
   }
-  return entry.value;
+  if (entry.freshUntil > now) {
+    return { state: "fresh", value: entry.value };
+  }
+  return { state: "stale", value: entry.value };
 }
 
-function setCachedValue<T>(cache: Map<string, CacheEntry<T>>, key: string, value: T, ttlMs: number) {
-  cache.set(key, { value, expiresAt: Date.now() + ttlMs });
+function setCachedValue<T>(cache: Map<string, CacheEntry<T>>, key: string, value: T, freshTtlMs: number, staleTtlMs: number) {
+  const now = Date.now();
+  cache.set(key, { value, freshUntil: now + freshTtlMs, staleUntil: now + staleTtlMs });
+}
+
+function runStaleRefresh(key: string, label: string, refresh: () => Promise<void>) {
+  if (categoryRefreshInFlight.has(key)) return;
+  categoryRefreshInFlight.add(key);
+  void refresh()
+    .catch((error) => {
+      console.error(`[perf] stale-refresh-failed ${label}`, error);
+    })
+    .finally(() => {
+      categoryRefreshInFlight.delete(key);
+    });
 }
 
 function startRoutePerf(req: Request, label: string): RoutePerf {
   return {
     cacheHit: false,
+    cacheState: "miss",
     label: `${label} ${req.originalUrl}`,
     prismaMs: 0,
     startMs: performance.now(),
@@ -57,14 +82,23 @@ async function timePrisma<T>(perf: RoutePerf, operation: string, run: () => Prom
   }
 }
 
-function sendTimedJson(perf: RoutePerf, res: Response, payload: { success: true; data: unknown }, status = 200) {
+function sendTimedJson(
+  perf: RoutePerf,
+  res: Response,
+  payload: { success: true; data: unknown },
+  status = 200,
+  cacheControl?: string,
+) {
+  if (cacheControl) {
+    res.setHeader("Cache-Control", cacheControl);
+  }
   const responseStartedAt = performance.now();
   res.status(status).json(payload);
   if (!DEV_TIMING_ENABLED) return;
   const responseMs = performance.now() - responseStartedAt;
   const totalMs = performance.now() - perf.startMs;
   console.log(
-    `[perf] ${perf.label} total=${totalMs.toFixed(1)}ms prisma=${perf.prismaMs.toFixed(1)}ms response=${responseMs.toFixed(1)}ms cache=${perf.cacheHit ? "hit" : "miss"}`,
+    `[perf] ${perf.label} total=${totalMs.toFixed(1)}ms prisma=${perf.prismaMs.toFixed(1)}ms response=${responseMs.toFixed(1)}ms cache=${perf.cacheState}`,
   );
 }
 
@@ -92,7 +126,19 @@ router.get("/", async (req, res, next) => {
     const cachedResponse = getCachedValue(categoriesListCache, "root");
     if (cachedResponse) {
       perf.cacheHit = true;
-      return sendTimedJson(perf, res, cachedResponse);
+      perf.cacheState = cachedResponse.state;
+      if (cachedResponse.state === "stale") {
+        runStaleRefresh("root", "categories.list", async () => {
+          const categories = await prisma.category.findMany({
+            where: { parentId: null },
+            select: categorySelect,
+            orderBy: { name: "asc" },
+          });
+          const refreshed = { success: true as const, data: categories };
+          setCachedValue(categoriesListCache, "root", refreshed, CATEGORIES_CACHE_TTL_MS, CATEGORIES_STALE_TTL_MS);
+        });
+      }
+      return sendTimedJson(perf, res, cachedResponse.value, 200, CATEGORIES_CACHE_CONTROL_HEADER);
     }
 
     const categories = await timePrisma(perf, "categories.list", () =>
@@ -104,8 +150,8 @@ router.get("/", async (req, res, next) => {
     );
 
     const payload = { success: true as const, data: categories };
-    setCachedValue(categoriesListCache, "root", payload, CATEGORIES_CACHE_TTL_MS);
-    return sendTimedJson(perf, res, payload);
+    setCachedValue(categoriesListCache, "root", payload, CATEGORIES_CACHE_TTL_MS, CATEGORIES_STALE_TTL_MS);
+    return sendTimedJson(perf, res, payload, 200, CATEGORIES_CACHE_CONTROL_HEADER);
   } catch (e) {
     next(e);
   }
@@ -118,7 +164,32 @@ router.get("/:slug", async (req, res, next) => {
     const cachedResponse = getCachedValue(categoryBySlugCache, slug);
     if (cachedResponse) {
       perf.cacheHit = true;
-      return sendTimedJson(perf, res, cachedResponse);
+      perf.cacheState = cachedResponse.state;
+      if (cachedResponse.state === "stale") {
+        runStaleRefresh(`slug:${slug}`, `categories.detail ${slug}`, async () => {
+          const category = await prisma.category.findUnique({
+            where: { slug },
+            select: {
+              ...categorySelect,
+              parent: {
+                select: {
+                  id: true,
+                  name: true,
+                  slug: true,
+                  parentId: true,
+                },
+              },
+            },
+          });
+          if (!category) {
+            categoryBySlugCache.delete(slug);
+            return;
+          }
+          const refreshed = { success: true as const, data: category };
+          setCachedValue(categoryBySlugCache, slug, refreshed, CATEGORIES_CACHE_TTL_MS, CATEGORIES_STALE_TTL_MS);
+        });
+      }
+      return sendTimedJson(perf, res, cachedResponse.value, 200, CATEGORIES_CACHE_CONTROL_HEADER);
     }
 
     const category = await timePrisma(perf, "categories.detail", () =>
@@ -143,8 +214,8 @@ router.get("/:slug", async (req, res, next) => {
     }
 
     const payload = { success: true as const, data: category };
-    setCachedValue(categoryBySlugCache, slug, payload, CATEGORIES_CACHE_TTL_MS);
-    return sendTimedJson(perf, res, payload);
+    setCachedValue(categoryBySlugCache, slug, payload, CATEGORIES_CACHE_TTL_MS, CATEGORIES_STALE_TTL_MS);
+    return sendTimedJson(perf, res, payload, 200, CATEGORIES_CACHE_CONTROL_HEADER);
   } catch (e) {
     next(e);
   }
