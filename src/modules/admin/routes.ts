@@ -16,6 +16,7 @@ const reportStatusSchema = z.object({
 const verificationReviewSchema = z.object({
   status: z.enum(["IN_REVIEW", "APPROVED", "REJECTED"]),
   rejectionReason: z.string().trim().max(1000).optional(),
+  decisionNote: z.string().trim().max(1000).optional(),
 });
 
 const banUserSchema = z.object({
@@ -402,12 +403,16 @@ router.patch("/verifications/:id", async (req: Request, res: Response) => {
         },
         documents: true,
         payments: { orderBy: { createdAt: "desc" }, take: 5 },
+        reviewer: {
+          select: { id: true, fullName: true, email: true },
+        },
       },
     });
 
     await auditAdminAction(req, "VERIFICATION_REVIEWED", "VerificationApplication", id, {
       previousStatus: existing.status,
       status: body.status,
+      decisionNote: body.decisionNote ?? null,
     });
 
     res.json({ success: true, data: verification, message: "Verification updated" });
