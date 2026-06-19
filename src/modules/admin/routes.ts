@@ -4,6 +4,7 @@ import { z } from "zod";
 import { prisma } from "../../lib/prisma";
 import { requireAuth } from "../../middleware/auth";
 import { parseOrThrow } from "../../utils/validation";
+import { getCached, setCached, getCacheKey, invalidateCache, CACHE_TTLS } from "../../lib/admin-cache";
 
 const router = Router();
 
@@ -114,6 +115,12 @@ router.use(requireAdmin);
 
 router.get("/stats", async (_req: Request, res: Response) => {
   try {
+    const cacheKey = getCacheKey("/admin/stats");
+    const cached = getCached(cacheKey);
+    if (cached) {
+      return res.json({ success: true, data: cached, _cached: true });
+    }
+
     const [totalUsers, bannedUsers, totalAds, totalReports, pendingReports, pendingVerifications] = await prisma.$transaction([
       prisma.user.count(),
       prisma.user.count({ where: { status: "BANNED" } }),
@@ -123,16 +130,20 @@ router.get("/stats", async (_req: Request, res: Response) => {
       prisma.verificationApplication.count({ where: { status: { in: ["SUBMITTED", "IN_REVIEW"] } } }),
     ]);
 
+    const data = {
+      totalUsers,
+      bannedUsers,
+      totalAds,
+      totalReports,
+      pendingReports,
+      pendingVerifications,
+    };
+
+    setCached(cacheKey, data, CACHE_TTLS.STATS);
+
     res.json({
       success: true,
-      data: {
-        totalUsers,
-        bannedUsers,
-        totalAds,
-        totalReports,
-        pendingReports,
-        pendingVerifications,
-      },
+      data,
     });
   } catch {
     res.status(500).json({ success: false, message: "Failed to fetch admin stats" });
@@ -142,6 +153,12 @@ router.get("/stats", async (_req: Request, res: Response) => {
 router.get("/users", async (req: Request, res: Response) => {
   try {
     const { page, pageSize, skip } = getPage(req);
+    const cacheKey = getCacheKey("/admin/users", { page, pageSize });
+    const cached = getCached(cacheKey);
+    if (cached) {
+      return res.json({ success: true, data: cached.data, meta: cached.meta, _cached: true });
+    }
+
     const [users, total] = await prisma.$transaction([
       prisma.user.findMany({
         select: safeAdminUserSelect,
@@ -152,6 +169,9 @@ router.get("/users", async (req: Request, res: Response) => {
       prisma.user.count(),
     ]);
 
+    const cacheData = { data: users, meta: { page, pageSize, total } };
+    setCached(cacheKey, cacheData, CACHE_TTLS.USERS);
+
     res.json({ success: true, data: users, meta: { page, pageSize, total } });
   } catch {
     res.status(500).json({ success: false, message: "Failed to fetch users" });
@@ -161,6 +181,12 @@ router.get("/users", async (req: Request, res: Response) => {
 router.get("/ads", async (req: Request, res: Response) => {
   try {
     const { page, pageSize, skip } = getPage(req);
+    const cacheKey = getCacheKey("/admin/ads", { page, pageSize });
+    const cached = getCached(cacheKey);
+    if (cached) {
+      return res.json({ success: true, data: cached.data, meta: cached.meta, _cached: true });
+    }
+
     const [ads, total] = await prisma.$transaction([
       prisma.ad.findMany({
         include: {
@@ -178,6 +204,9 @@ router.get("/ads", async (req: Request, res: Response) => {
       }),
       prisma.ad.count(),
     ]);
+
+    const cacheData = { data: ads, meta: { page, pageSize, total } };
+    setCached(cacheKey, cacheData, CACHE_TTLS.ADS);
 
     res.json({ success: true, data: ads, meta: { page, pageSize, total } });
   } catch {
@@ -209,6 +238,9 @@ router.patch("/ads/:id/status", async (req: Request, res: Response) => {
       },
     });
 
+    // Invalidate related caches
+    invalidateCache("/admin/ads", "/admin/reports", "/admin/stats", "/admin/audit-log");
+
     await auditAdminAction(req, "AD_STATUS_UPDATED", "Ad", id, {
       title: existing.title,
       userId: existing.userId,
@@ -231,6 +263,12 @@ router.patch("/ads/:id/status", async (req: Request, res: Response) => {
 router.get("/reports", async (req: Request, res: Response) => {
   try {
     const { page, pageSize, skip } = getPage(req);
+    const cacheKey = getCacheKey("/admin/reports", { page, pageSize });
+    const cached = getCached(cacheKey);
+    if (cached) {
+      return res.json({ success: true, data: cached.data, meta: cached.meta, _cached: true });
+    }
+
     const [reports, total] = await prisma.$transaction([
       prisma.report.findMany({
         include: {
@@ -248,6 +286,9 @@ router.get("/reports", async (req: Request, res: Response) => {
       prisma.report.count(),
     ]);
 
+    const cacheData = { data: reports, meta: { page, pageSize, total } };
+    setCached(cacheKey, cacheData, CACHE_TTLS.REPORTS);
+
     res.json({ success: true, data: reports, meta: { page, pageSize, total } });
   } catch {
     res.status(500).json({ success: false, message: "Failed to fetch reports" });
@@ -257,6 +298,12 @@ router.get("/reports", async (req: Request, res: Response) => {
 router.get("/reviews", async (req: Request, res: Response) => {
   try {
     const { page, pageSize, skip } = getPage(req);
+    const cacheKey = getCacheKey("/admin/reviews", { page, pageSize });
+    const cached = getCached(cacheKey);
+    if (cached) {
+      return res.json({ success: true, data: cached.data, meta: cached.meta, _cached: true });
+    }
+
     const [reviews, total] = await prisma.$transaction([
       prisma.review.findMany({
         include: {
@@ -280,6 +327,9 @@ router.get("/reviews", async (req: Request, res: Response) => {
       }),
       prisma.review.count(),
     ]);
+
+    const cacheData = { data: reviews, meta: { page, pageSize, total } };
+    setCached(cacheKey, cacheData, CACHE_TTLS.REVIEWS);
 
     res.json({ success: true, data: reviews, meta: { page, pageSize, total } });
   } catch {
@@ -307,6 +357,10 @@ router.delete("/reviews/:id", async (req: Request, res: Response) => {
     if (!existing) return notFound(res, "Review not found");
 
     await prisma.review.delete({ where: { id } });
+
+    // Invalidate related caches
+    invalidateCache("/admin/reviews", "/admin/stats", "/admin/audit-log");
+
     await auditAdminAction(req, "REVIEW_DELETED", "Review", id, {
       adId: existing.adId,
       adTitle: existing.ad.title,
@@ -373,6 +427,9 @@ router.patch("/reports/:id", async (req: Request, res: Response) => {
       return updatedReport;
     });
 
+    // Invalidate related caches
+    invalidateCache("/admin/reports", "/admin/ads", "/admin/stats", "/admin/audit-log");
+
     await auditAdminAction(req, "REPORT_STATUS_UPDATED", "Report", id, {
       previousStatus: existing.status,
       status: body.status,
@@ -409,6 +466,12 @@ router.get("/verifications", async (req: Request, res: Response) => {
     const status = String(req.query.status ?? "").trim();
     const where = status ? { status: status as any } : {};
 
+    const cacheKey = getCacheKey("/admin/verifications", { page, pageSize, status });
+    const cached = getCached(cacheKey);
+    if (cached) {
+      return res.json({ success: true, data: cached.data, meta: cached.meta, _cached: true });
+    }
+
     const [verifications, total] = await prisma.$transaction([
       prisma.verificationApplication.findMany({
         where,
@@ -437,6 +500,9 @@ router.get("/verifications", async (req: Request, res: Response) => {
       }),
       prisma.verificationApplication.count({ where }),
     ]);
+
+    const cacheData = { data: verifications, meta: { page, pageSize, total } };
+    setCached(cacheKey, cacheData, CACHE_TTLS.VERIFICATIONS);
 
     res.json({ success: true, data: verifications, meta: { page, pageSize, total } });
   } catch {
@@ -485,6 +551,9 @@ router.patch("/verifications/:id", async (req: Request, res: Response) => {
       },
     });
 
+    // Invalidate related caches
+    invalidateCache("/admin/verifications", "/admin/stats", "/admin/audit-log");
+
     await auditAdminAction(req, "VERIFICATION_REVIEWED", "VerificationApplication", id, {
       previousStatus: existing.status,
       status: body.status,
@@ -506,6 +575,10 @@ router.delete("/ads/:id", async (req: Request, res: Response) => {
     if (!existing) return notFound(res, "Ad not found");
 
     await prisma.ad.delete({ where: { id } });
+
+    // Invalidate related caches
+    invalidateCache("/admin/ads", "/admin/stats", "/admin/audit-log");
+
     await auditAdminAction(req, "AD_DELETED", "Ad", id, {
       title: existing.title,
       userId: existing.userId,
@@ -540,6 +613,9 @@ router.post("/users/:id/ban", async (req: Request, res: Response) => {
       select: safeAdminUserSelect,
     });
 
+    // Invalidate related caches
+    invalidateCache("/admin/users", "/admin/stats", "/admin/audit-log");
+
     await auditAdminAction(req, "USER_BANNED", "User", id, { reason: user.banReason });
     res.json({ success: true, message: "User banned successfully", data: user });
   } catch (error) {
@@ -560,6 +636,9 @@ router.post("/users/:id/unban", async (req: Request, res: Response) => {
       select: safeAdminUserSelect,
     });
 
+    // Invalidate related caches
+    invalidateCache("/admin/users", "/admin/stats", "/admin/audit-log");
+
     await auditAdminAction(req, "USER_UNBANNED", "User", id);
     res.json({ success: true, message: "User restored successfully", data: user });
   } catch {
@@ -578,6 +657,13 @@ router.get("/audit-log", async (req: Request, res: Response) => {
   try {
     const { page, pageSize, skip } = getPage(req);
     const query = parseOrThrow(auditLogQuerySchema, req.query);
+
+    // Generate cache key - include query filters
+    const cacheKey = getCacheKey("/admin/audit-log", { page, pageSize, action: query.action, targetType: query.targetType });
+    const cached = getCached(cacheKey);
+    if (cached) {
+      return res.json({ success: true, data: cached.data, meta: cached.meta, _cached: true });
+    }
 
     const where: Prisma.AdminAuditLogWhereInput = {};
     if (query.action) where.action = query.action;
@@ -611,6 +697,10 @@ router.get("/audit-log", async (req: Request, res: Response) => {
       }),
       prisma.adminAuditLog.count({ where }),
     ]);
+
+    const cacheData = { data: logs, meta: { page, pageSize, total } };
+    // Very short TTL for audit log since it must reflect recent actions
+    setCached(cacheKey, cacheData, CACHE_TTLS.AUDIT_LOG);
 
     res.json({ success: true, data: logs, meta: { page, pageSize, total } });
   } catch {
