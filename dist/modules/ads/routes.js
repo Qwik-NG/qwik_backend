@@ -105,6 +105,19 @@ function getLocationSearchTerms(value) {
     return [location];
 }
 async function getCategoryIds(input) {
+    // Lightweight seller select for list endpoints (faster queries)
+    const lightweightSellerSelect = {
+        id: true,
+        fullName: true,
+        location: true,
+        role: true,
+        profile: {
+            select: {
+                avatarUrl: true,
+                isBusiness: true,
+            },
+        },
+    };
     if (input.subcategory) {
         const subcategory = await prisma_1.prisma.category.findUnique({
             where: { slug: normalizeSlug(input.subcategory) },

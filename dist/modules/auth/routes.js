@@ -245,7 +245,11 @@ router.post("/google", async (req, res, next) => {
         if (!googleClient || !env_1.env.googleClientId) {
             return res.status(503).json({ success: false, message: "Google sign-in is not configured" });
         }
-        const { credential } = (0, validation_1.parseOrThrow)(zod_1.z.object({ credential: zod_1.z.string().min(20) }), req.body);
+        const { credential, termsAccepted, privacyAccepted } = (0, validation_1.parseOrThrow)(zod_1.z.object({
+            credential: zod_1.z.string().min(20),
+            termsAccepted: zod_1.z.boolean().optional(),
+            privacyAccepted: zod_1.z.boolean().optional(),
+        }), req.body);
         let ticket;
         try {
             ticket = await googleClient.verifyIdToken({ idToken: credential, audience: env_1.env.googleClientId });
@@ -274,8 +278,27 @@ router.post("/google", async (req, res, next) => {
                     select: { ...authUserSelect, id: true, googleId: true },
                 });
             }
+            if (!user.termsAcceptedAt || !user.privacyAcceptedAt) {
+                if (termsAccepted !== true || privacyAccepted !== true) {
+                    return res.status(400).json({ success: false, message: "Terms of Use and Privacy Policy must be accepted" });
+                }
+                const acceptedAt = new Date();
+                user = await prisma_1.prisma.user.update({
+                    where: { id: user.id },
+                    data: {
+                        termsAcceptedAt: user.termsAcceptedAt ?? acceptedAt,
+                        privacyAcceptedAt: user.privacyAcceptedAt ?? acceptedAt,
+                        termsVersion: user.termsVersion ?? TERMS_VERSION,
+                        privacyVersion: user.privacyVersion ?? PRIVACY_VERSION,
+                    },
+                    select: { ...authUserSelect, id: true, googleId: true },
+                });
+            }
         }
         else {
+            if (termsAccepted !== true || privacyAccepted !== true) {
+                return res.status(400).json({ success: false, message: "Terms of Use and Privacy Policy must be accepted" });
+            }
             const acceptedAt = new Date();
             user = await prisma_1.prisma.user.create({
                 data: {

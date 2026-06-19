@@ -126,6 +126,19 @@ async function getCategoryIds(input: {
   category?: string;
   subcategory?: string;
 }) {
+// Lightweight seller select for list endpoints (faster queries)
+const lightweightSellerSelect = {
+  id: true,
+  fullName: true,
+  location: true,
+  role: true,
+  profile: {
+    select: {
+      avatarUrl: true,
+      isBusiness: true,
+    },
+  },
+};
   if (input.subcategory) {
     const subcategory = await prisma.category.findUnique({
       where: { slug: normalizeSlug(input.subcategory) },
