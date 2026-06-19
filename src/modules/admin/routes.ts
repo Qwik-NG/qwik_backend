@@ -9,6 +9,8 @@ const router = Router();
 
 const reportStatusSchema = z.object({
   status: z.enum(["PENDING", "RESOLVED", "DISMISSED"]),
+  note: z.string().trim().min(3).max(500).optional(),
+  unlistAd: z.boolean().optional().default(false),
 });
 
 const verificationReviewSchema = z.object({
@@ -251,24 +253,73 @@ router.patch("/reports/:id", async (req: Request, res: Response) => {
   try {
     const id = String(req.params.id);
     const body = parseOrThrow(reportStatusSchema, req.body);
-    const existing = await prisma.report.findUnique({ where: { id }, select: { id: true, status: true } });
+    if (body.unlistAd && body.status !== "RESOLVED") {
+      return res.status(400).json({ success: false, message: "Ad unlisting is only allowed when resolving a report" });
+    }
+
+    const existing = await prisma.report.findUnique({
+      where: { id },
+      select: { id: true, status: true, adId: true, reason: true },
+    });
     if (!existing) return notFound(res, "Report not found");
 
-    const report = await prisma.report.update({
-      where: { id },
-      data: { status: body.status },
-      include: {
-        ad: { select: { id: true, title: true } },
-        user: { select: { id: true, fullName: true, email: true } },
-      },
+    const adBefore = body.unlistAd
+      ? await prisma.ad.findUnique({
+          where: { id: existing.adId },
+          select: { id: true, title: true, status: true, userId: true },
+        })
+      : null;
+
+    const report = await prisma.$transaction(async (tx) => {
+      const updatedReport = await tx.report.update({
+        where: { id },
+        data: { status: body.status },
+        include: {
+          ad: {
+            select: {
+              id: true,
+              title: true,
+              user: { select: { id: true, fullName: true, email: true } },
+            },
+          },
+          user: { select: { id: true, fullName: true, email: true } },
+        },
+      });
+
+      if (body.unlistAd && adBefore && adBefore.status === "ACTIVE") {
+        await tx.ad.update({
+          where: { id: adBefore.id },
+          data: { status: "ARCHIVED" },
+        });
+      }
+
+      return updatedReport;
     });
 
     await auditAdminAction(req, "REPORT_STATUS_UPDATED", "Report", id, {
       previousStatus: existing.status,
       status: body.status,
+      note: body.note ?? null,
+      unlistAd: body.unlistAd,
     });
 
-    res.json({ success: true, data: report, message: "Report updated" });
+    if (body.unlistAd && adBefore) {
+      await auditAdminAction(req, "AD_STATUS_UPDATED", "Ad", adBefore.id, {
+        title: adBefore.title,
+        userId: adBefore.userId,
+        previousStatus: adBefore.status,
+        status: adBefore.status === "ACTIVE" ? "ARCHIVED" : adBefore.status,
+        source: "REPORT_ESCALATION",
+        reportId: id,
+        reason: body.note ?? existing.reason,
+      });
+    }
+
+    res.json({
+      success: true,
+      data: report,
+      message: body.unlistAd ? "Report resolved and ad unlisted" : "Report updated",
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to update report";
     res.status(message.includes("Invalid") ? 400 : 500).json({ success: false, message });
