@@ -176,6 +176,7 @@ model Ad {
   @@index([locationArea])
   @@index([createdAt])
   @@index([status])
+  @@index([status, createdAt])
 }
 
 model Conversation {

@@ -1,5 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+const node_perf_hooks_1 = require("node:perf_hooks");
 const express_1 = require("express");
 const zod_1 = require("zod");
 const prisma_1 = require("../../lib/prisma");
@@ -9,19 +10,103 @@ const auth_1 = require("../../middleware/auth");
 const paymentPricing_1 = require("../../utils/paymentPricing");
 const notifications_1 = require("../../utils/notifications");
 const router = (0, express_1.Router)();
-const sellerSelect = {
+const DEV_TIMING_ENABLED = process.env.NODE_ENV !== "production";
+const ADS_LIST_CACHE_TTL_MS = 30000;
+const AD_DETAILS_CACHE_TTL_MS = 30000;
+const MAX_CACHE_ENTRIES = 100;
+const adsListCache = new Map();
+const adDetailsCache = new Map();
+function getCachedValue(cache, key) {
+    const entry = cache.get(key);
+    if (!entry)
+        return null;
+    if (entry.expiresAt <= Date.now()) {
+        cache.delete(key);
+        return null;
+    }
+    return entry.value;
+}
+function setCachedValue(cache, key, value, ttlMs) {
+    cache.set(key, { value, expiresAt: Date.now() + ttlMs });
+    if (cache.size <= MAX_CACHE_ENTRIES)
+        return;
+    const oldestKey = cache.keys().next().value;
+    if (oldestKey)
+        cache.delete(oldestKey);
+}
+function clearAdCaches(adId) {
+    adsListCache.clear();
+    if (adId) {
+        adDetailsCache.delete(adId);
+        return;
+    }
+    adDetailsCache.clear();
+}
+function startRoutePerf(req, label) {
+    return {
+        cacheHit: false,
+        label: `${label} ${req.originalUrl}`,
+        prismaMs: 0,
+        startMs: node_perf_hooks_1.performance.now(),
+    };
+}
+async function timePrisma(perf, operation, run) {
+    const startedAt = node_perf_hooks_1.performance.now();
+    try {
+        return await run();
+    }
+    finally {
+        const duration = node_perf_hooks_1.performance.now() - startedAt;
+        perf.prismaMs += duration;
+        if (DEV_TIMING_ENABLED) {
+            console.log(`[perf] prisma ${operation} ${duration.toFixed(1)}ms`);
+        }
+    }
+}
+function sendTimedJson(perf, res, payload, status = 200) {
+    const responseStartedAt = node_perf_hooks_1.performance.now();
+    res.status(status).json(payload);
+    if (!DEV_TIMING_ENABLED)
+        return;
+    const responseMs = node_perf_hooks_1.performance.now() - responseStartedAt;
+    const totalMs = node_perf_hooks_1.performance.now() - perf.startMs;
+    console.log(`[perf] ${perf.label} total=${totalMs.toFixed(1)}ms prisma=${perf.prismaMs.toFixed(1)}ms response=${responseMs.toFixed(1)}ms cache=${perf.cacheHit ? "hit" : "miss"}`);
+}
+const verificationApplicationsSelect = {
+    orderBy: { createdAt: "desc" },
+    take: 1,
+    select: { id: true, status: true, paymentStatus: true },
+};
+const adListSellerSelect = {
+    id: true,
+    fullName: true,
+    location: true,
+    locationState: true,
+    locationArea: true,
+    role: true,
+    profile: {
+        select: {
+            avatarUrl: true,
+        },
+    },
+    verificationApplications: verificationApplicationsSelect,
+};
+const adDetailSellerSelect = {
     id: true,
     fullName: true,
     phone: true,
     location: true,
+    locationState: true,
+    locationArea: true,
     role: true,
     createdAt: true,
-    profile: true,
-    verificationApplications: {
-        orderBy: { createdAt: "desc" },
-        take: 1,
-        select: { id: true, status: true, paymentStatus: true },
+    profile: {
+        select: {
+            bio: true,
+            avatarUrl: true,
+        },
     },
+    verificationApplications: verificationApplicationsSelect,
 };
 const optionalStringQuery = zod_1.z.preprocess((value) => (Array.isArray(value) ? value[0] : value), zod_1.z.string().optional().default(""));
 const optionalNumberQuery = zod_1.z.preprocess((value) => (value === undefined || value === "" ? undefined : Array.isArray(value) ? value[0] : value), zod_1.z.coerce.number().optional());
@@ -55,10 +140,74 @@ const adsListQuerySchema = zod_1.z.object({
     brand: optionalStringQuery,
     imagesLimit: optionalLimitedIntegerQuery(10),
 });
-const adInclude = {
-    images: { orderBy: { position: "asc" } },
-    category: true,
-    user: { select: sellerSelect },
+const adListSelect = {
+    id: true,
+    title: true,
+    description: true,
+    price: true,
+    location: true,
+    locationState: true,
+    locationArea: true,
+    brand: true,
+    model: true,
+    condition: true,
+    status: true,
+    isPromoted: true,
+    createdAt: true,
+    category: {
+        select: {
+            id: true,
+            name: true,
+            slug: true,
+            parentId: true,
+        },
+    },
+    images: {
+        take: 1,
+        orderBy: { position: "asc" },
+        select: {
+            id: true,
+            url: true,
+            position: true,
+        },
+    },
+    user: { select: adListSellerSelect },
+};
+const adDetailSelect = {
+    id: true,
+    userId: true,
+    categoryId: true,
+    title: true,
+    description: true,
+    price: true,
+    location: true,
+    locationState: true,
+    locationArea: true,
+    brand: true,
+    model: true,
+    condition: true,
+    specifications: true,
+    status: true,
+    isPromoted: true,
+    createdAt: true,
+    updatedAt: true,
+    category: {
+        select: {
+            id: true,
+            name: true,
+            slug: true,
+            parentId: true,
+        },
+    },
+    images: {
+        orderBy: { position: "asc" },
+        select: {
+            id: true,
+            url: true,
+            position: true,
+        },
+    },
+    user: { select: adDetailSellerSelect },
 };
 const categoryAliases = {
     car: "vehicles",
@@ -105,19 +254,6 @@ function getLocationSearchTerms(value) {
     return [location];
 }
 async function getCategoryIds(input) {
-    // Lightweight seller select for list endpoints (faster queries)
-    const lightweightSellerSelect = {
-        id: true,
-        fullName: true,
-        location: true,
-        role: true,
-        profile: {
-            select: {
-                avatarUrl: true,
-                isBusiness: true,
-            },
-        },
-    };
     if (input.subcategory) {
         const subcategory = await prisma_1.prisma.category.findUnique({
             where: { slug: normalizeSlug(input.subcategory) },
@@ -141,7 +277,13 @@ async function getCategoryIds(input) {
     return [category.id, ...category.children.map((child) => child.id)];
 }
 router.get("/", async (req, res, next) => {
+    const perf = startRoutePerf(req, "GET /api/ads");
     try {
+        const cachedResponse = getCachedValue(adsListCache, req.originalUrl);
+        if (cachedResponse) {
+            perf.cacheHit = true;
+            return sendTimedJson(perf, res, cachedResponse);
+        }
         const query = (0, validation_1.parseOrThrow)(adsListQuerySchema, req.query);
         const { page, pageSize, minPrice, maxPrice, imagesLimit, sort } = query;
         const search = (query.q || query.search).trim();
@@ -164,11 +306,11 @@ router.get("/", async (req, res, next) => {
             { location: { contains: term, mode: "insensitive" } },
             { locationState: { contains: term, mode: "insensitive" } },
         ]);
-        const categoryIds = await getCategoryIds({
+        const categoryIds = await timePrisma(perf, "getCategoryIds", () => getCategoryIds({
             categoryId: categoryId || undefined,
             category: category || undefined,
             subcategory: subcategory || undefined,
-        });
+        }));
         const where = {
             status: "ACTIVE",
             ...(searchFilters.length || locationFilters.length
@@ -191,36 +333,42 @@ router.get("/", async (req, res, next) => {
             ...(condition ? { condition: { contains: condition, mode: "insensitive" } } : {}),
             ...(brand ? { brand: { contains: brand, mode: "insensitive" } } : {}),
         };
-        const [total, ads] = await prisma_1.prisma.$transaction([
+        const [total, ads] = await timePrisma(perf, "ads.list", () => Promise.all([
             prisma_1.prisma.ad.count({ where }),
             prisma_1.prisma.ad.findMany({
                 where,
-                include: {
-                    images: { take: imagesLimit ?? 1, orderBy: { position: "asc" } },
-                    category: true,
-                    user: { select: sellerSelect },
-                },
+                select: adListSelect,
                 orderBy: sort === "price-low" ? { price: "asc" } : sort === "price-high" ? { price: "desc" } : { createdAt: "desc" },
                 skip: (page - 1) * pageSize,
                 take: pageSize,
             }),
-        ]);
-        res.json({ success: true, data: ads, meta: { page, pageSize, total } });
+        ]));
+        const payload = { success: true, data: ads, meta: { page, pageSize, total } };
+        setCachedValue(adsListCache, req.originalUrl, payload, ADS_LIST_CACHE_TTL_MS);
+        return sendTimedJson(perf, res, payload);
     }
     catch (e) {
         next(e);
     }
 });
 router.get("/:id", async (req, res, next) => {
+    const perf = startRoutePerf(req, "GET /api/ads/:id");
     try {
         const id = String(req.params.id);
-        const ad = await prisma_1.prisma.ad.findUnique({
+        const cachedResponse = getCachedValue(adDetailsCache, id);
+        if (cachedResponse) {
+            perf.cacheHit = true;
+            return sendTimedJson(perf, res, cachedResponse);
+        }
+        const ad = await timePrisma(perf, "ads.detail", () => prisma_1.prisma.ad.findUnique({
             where: { id },
-            include: adInclude,
-        });
+            select: adDetailSelect,
+        }));
         if (!ad)
             return res.status(404).json({ success: false, message: "Ad not found" });
-        res.json({ success: true, data: ad });
+        const payload = { success: true, data: ad };
+        setCachedValue(adDetailsCache, id, payload, AD_DETAILS_CACHE_TTL_MS);
+        return sendTimedJson(perf, res, payload);
     }
     catch (e) {
         next(e);
@@ -265,8 +413,9 @@ router.post("/", auth_1.requireAuth, auth_1.requireActiveUser, auth_1.requireVer
                 specifications: b.specifications,
                 images: { createMany: { data: b.imageUrls.map((url, index) => ({ url, position: index })) } },
             },
-            include: adInclude,
+            select: adDetailSelect,
         });
+        clearAdCaches(ad.id);
         void (0, notifications_1.createSellerNewAdNotifications)({
             sellerId: req.auth.userId,
             sellerName: ad.user.fullName,
@@ -323,10 +472,11 @@ router.patch("/:id", auth_1.requireAuth, auth_1.requireActiveUser, async (req, r
                         ...data,
                         ...(imageUrls ? { images: { createMany: { data: imageUrls.map((url, index) => ({ url, position: index })) } } } : {}),
                     },
-                    include: adInclude,
+                    select: adDetailSelect,
                 });
             }),
         });
+        clearAdCaches(id);
     }
     catch (e) {
         next(e);
@@ -341,6 +491,7 @@ router.delete("/:id", auth_1.requireAuth, auth_1.requireActiveUser, async (req, 
         if (ad.userId !== req.auth.userId)
             return res.status(403).json({ success: false, message: "Forbidden" });
         await prisma_1.prisma.ad.delete({ where: { id } });
+        clearAdCaches(id);
         res.json({ success: true, data: null, message: "Ad deleted" });
     }
     catch (e) {
@@ -514,8 +665,9 @@ router.patch("/:id/mark-unavailable", auth_1.requireAuth, async (req, res, next)
         const updated = await prisma_1.prisma.ad.update({
             where: { id },
             data: { status: "ARCHIVED" },
-            include: adInclude,
+            select: adDetailSelect,
         });
+        clearAdCaches(id);
         res.json({ success: true, message: "Ad marked unavailable", data: updated });
     }
     catch (e) {
