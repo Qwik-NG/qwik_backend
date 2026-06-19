@@ -20,6 +20,15 @@ const banUserSchema = z.object({
   reason: z.string().trim().min(3).max(500).optional(),
 });
 
+const adModerationSchema = z.object({
+  status: z.enum(["ACTIVE", "ARCHIVED"]),
+  reason: z.string().trim().min(3).max(500).optional(),
+});
+
+const adDeleteSchema = z.object({
+  reason: z.string().trim().min(3).max(500).optional(),
+});
+
 const pageQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(50),
@@ -166,6 +175,49 @@ router.get("/ads", async (req: Request, res: Response) => {
     res.json({ success: true, data: ads, meta: { page, pageSize, total } });
   } catch {
     res.status(500).json({ success: false, message: "Failed to fetch ads" });
+  }
+});
+
+router.patch("/ads/:id/status", async (req: Request, res: Response) => {
+  try {
+    const id = String(req.params.id);
+    const body = parseOrThrow(adModerationSchema, req.body ?? {});
+    const existing = await prisma.ad.findUnique({
+      where: { id },
+      select: { id: true, title: true, userId: true, status: true },
+    });
+    if (!existing) return notFound(res, "Ad not found");
+
+    const ad = await prisma.ad.update({
+      where: { id },
+      data: { status: body.status },
+      include: {
+        user: {
+          select: { id: true, fullName: true, email: true, status: true },
+        },
+        category: true,
+        _count: {
+          select: { images: true, reviews: true, reports: true },
+        },
+      },
+    });
+
+    await auditAdminAction(req, "AD_STATUS_UPDATED", "Ad", id, {
+      title: existing.title,
+      userId: existing.userId,
+      previousStatus: existing.status,
+      status: body.status,
+      reason: body.reason ?? null,
+    });
+
+    res.json({
+      success: true,
+      data: ad,
+      message: body.status === "ARCHIVED" ? "Ad unlisted successfully" : "Ad reinstated successfully",
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to update ad status";
+    res.status(message.includes("Invalid") ? 400 : 500).json({ success: false, message });
   }
 });
 
@@ -317,6 +369,7 @@ router.patch("/verifications/:id", async (req: Request, res: Response) => {
 router.delete("/ads/:id", async (req: Request, res: Response) => {
   try {
     const id = String(req.params.id);
+    const body = parseOrThrow(adDeleteSchema, req.body ?? {});
     const existing = await prisma.ad.findUnique({ where: { id }, select: { id: true, title: true, userId: true } });
     if (!existing) return notFound(res, "Ad not found");
 
@@ -324,6 +377,7 @@ router.delete("/ads/:id", async (req: Request, res: Response) => {
     await auditAdminAction(req, "AD_DELETED", "Ad", id, {
       title: existing.title,
       userId: existing.userId,
+      reason: body.reason ?? null,
     });
 
     res.json({ success: true, data: null, message: "Ad deleted successfully" });
