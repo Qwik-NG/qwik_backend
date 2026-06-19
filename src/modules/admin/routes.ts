@@ -567,11 +567,39 @@ router.post("/users/:id/unban", async (req: Request, res: Response) => {
   }
 });
 
+const auditLogQuerySchema = z.object({
+  action: z.string().trim().optional(),
+  targetType: z.string().trim().optional(),
+  from: z.string().trim().optional(),
+  to: z.string().trim().optional(),
+});
+
 router.get("/audit-log", async (req: Request, res: Response) => {
   try {
     const { page, pageSize, skip } = getPage(req);
+    const query = parseOrThrow(auditLogQuerySchema, req.query);
+
+    const where: Prisma.AdminAuditLogWhereInput = {};
+    if (query.action) where.action = query.action;
+    if (query.targetType) where.targetType = query.targetType;
+    if (query.from || query.to) {
+      where.createdAt = {};
+      if (query.from) {
+        const fromDate = new Date(query.from);
+        if (!isNaN(fromDate.getTime())) (where.createdAt as Prisma.DateTimeFilter).gte = fromDate;
+      }
+      if (query.to) {
+        const toDate = new Date(query.to);
+        if (!isNaN(toDate.getTime())) {
+          toDate.setHours(23, 59, 59, 999);
+          (where.createdAt as Prisma.DateTimeFilter).lte = toDate;
+        }
+      }
+    }
+
     const [logs, total] = await prisma.$transaction([
       prisma.adminAuditLog.findMany({
+        where,
         include: {
           admin: {
             select: { id: true, fullName: true, email: true },
@@ -581,7 +609,7 @@ router.get("/audit-log", async (req: Request, res: Response) => {
         skip,
         take: pageSize,
       }),
-      prisma.adminAuditLog.count(),
+      prisma.adminAuditLog.count({ where }),
     ]);
 
     res.json({ success: true, data: logs, meta: { page, pageSize, total } });
