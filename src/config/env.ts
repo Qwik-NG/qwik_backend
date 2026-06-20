@@ -92,6 +92,7 @@ export const env = {
   paystackSecretKey: process.env.PAYSTACK_SECRET_KEY ?? "",
   paystackPublicKey: process.env.PAYSTACK_PUBLIC_KEY ?? "",
   paystackCallbackUrl: process.env.PAYSTACK_CALLBACK_URL ?? "",
+  freeVerifiedSellerAds: process.env.FREE_VERIFIED_SELLER_ADS === "true",
   frontendUrl: frontendUrl || "http://localhost:5173",
   appOrigins: process.env.APP_ORIGINS ?? frontendOriginSeed,
   socketOrigins: process.env.SOCKET_ORIGINS ?? frontendOriginSeed,

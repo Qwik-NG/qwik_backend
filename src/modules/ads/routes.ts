@@ -4,6 +4,7 @@ import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../../lib/prisma";
 import { emitNotificationNew } from "../../lib/realtime";
+import { env } from "../../config/env";
 import { parseOrThrow, createImageUrlSchema } from "../../utils/validation";
 import { requireActiveUser, requireAuth, requireVerifiedEmail } from "../../middleware/auth";
 import { getPromotionPaymentAmountKobo, PROMOTION_PLAN_VALUES } from "../../utils/paymentPricing";
@@ -368,6 +369,39 @@ function toJsonObject(value: unknown) {
   return value && typeof value === "object" ? value : {};
 }
 
+function sellerVerifiedFromUser(user: unknown) {
+  const userObject = toJsonObject(user) as { verificationApplications?: Array<{ status?: string }>; sellerVerified?: boolean };
+  if (typeof userObject.sellerVerified === "boolean") {
+    return userObject.sellerVerified;
+  }
+  const latestVerification = Array.isArray(userObject.verificationApplications)
+    ? userObject.verificationApplications[0]
+    : undefined;
+  return latestVerification?.status === "APPROVED";
+}
+
+function withSellerVerifiedUser(user: unknown) {
+  const userObject = toJsonObject(user);
+  const verified = sellerVerifiedFromUser(userObject);
+  const profile = toJsonObject((userObject as { profile?: unknown }).profile);
+  return {
+    ...userObject,
+    sellerVerified: verified,
+    profile: {
+      ...profile,
+      verified,
+      verificationStatus: verified ? "verified" : "pending",
+    },
+  };
+}
+
+function withSellerVerifiedAd<T extends { user?: unknown }>(ad: T): T & { user: Record<string, unknown> } {
+  return {
+    ...ad,
+    user: withSellerVerifiedUser(ad.user),
+  };
+}
+
 function buildWhereClause(input: {
   search: string;
   locationTerms: string[];
@@ -592,7 +626,12 @@ async function buildAdsListPayload(
           'locationState', u."locationState",
           'locationArea', u."locationArea",
           'role', u."role"::text,
-          'profile', jsonb_build_object('avatarUrl', up."avatarUrl"),
+          'sellerVerified', CASE WHEN va."status" = 'APPROVED'::"VerificationStatus" THEN true ELSE false END,
+          'profile', jsonb_build_object(
+            'avatarUrl', up."avatarUrl",
+            'verified', CASE WHEN va."status" = 'APPROVED'::"VerificationStatus" THEN true ELSE false END,
+            'verificationStatus', CASE WHEN va."status" = 'APPROVED'::"VerificationStatus" THEN 'verified' ELSE 'pending' END
+          ),
           'verificationApplications', CASE WHEN va."id" IS NULL THEN '[]'::jsonb ELSE jsonb_build_array(jsonb_build_object('id', va."id", 'status', va."status"::text, 'paymentStatus', va."paymentStatus"::text)) END
         ) AS "user"
       FROM "Ad" a
@@ -675,7 +714,7 @@ async function buildAdsListPayload(
     createdAt: row.createdAt,
     category: toJsonObject(row.category),
     images: asArray(row.images),
-    user: toJsonObject(row.user),
+    user: withSellerVerifiedUser(row.user),
   }));
 
   return {
@@ -724,7 +763,13 @@ async function buildAdDetailsPayload(id: string, perf?: RoutePerf): Promise<AdDe
               'locationArea', u."locationArea",
               'role', u."role"::text,
               'createdAt', u."createdAt",
-              'profile', jsonb_build_object('bio', up."bio", 'avatarUrl', up."avatarUrl"),
+              'sellerVerified', CASE WHEN va."status" = 'APPROVED'::"VerificationStatus" THEN true ELSE false END,
+              'profile', jsonb_build_object(
+                'bio', up."bio",
+                'avatarUrl', up."avatarUrl",
+                'verified', CASE WHEN va."status" = 'APPROVED'::"VerificationStatus" THEN true ELSE false END,
+                'verificationStatus', CASE WHEN va."status" = 'APPROVED'::"VerificationStatus" THEN 'verified' ELSE 'pending' END
+              ),
               'verificationApplications', CASE WHEN va."id" IS NULL THEN '[]'::jsonb ELSE jsonb_build_array(jsonb_build_object('id', va."id", 'status', va."status"::text, 'paymentStatus', va."paymentStatus"::text)) END
             ) AS "user"
           FROM "Ad" a
@@ -786,7 +831,13 @@ async function buildAdDetailsPayload(id: string, perf?: RoutePerf): Promise<AdDe
             'locationArea', u."locationArea",
             'role', u."role"::text,
             'createdAt', u."createdAt",
-            'profile', jsonb_build_object('bio', up."bio", 'avatarUrl', up."avatarUrl"),
+            'sellerVerified', CASE WHEN va."status" = 'APPROVED'::"VerificationStatus" THEN true ELSE false END,
+            'profile', jsonb_build_object(
+              'bio', up."bio",
+              'avatarUrl', up."avatarUrl",
+              'verified', CASE WHEN va."status" = 'APPROVED'::"VerificationStatus" THEN true ELSE false END,
+              'verificationStatus', CASE WHEN va."status" = 'APPROVED'::"VerificationStatus" THEN 'verified' ELSE 'pending' END
+            ),
             'verificationApplications', CASE WHEN va."id" IS NULL THEN '[]'::jsonb ELSE jsonb_build_array(jsonb_build_object('id', va."id", 'status', va."status"::text, 'paymentStatus', va."paymentStatus"::text)) END
           ) AS "user"
         FROM "Ad" a
@@ -841,7 +892,7 @@ async function buildAdDetailsPayload(id: string, perf?: RoutePerf): Promise<AdDe
       updatedAt: ad.updatedAt,
       category: toJsonObject(ad.category),
       images: asArray(ad.images),
-      user: toJsonObject(ad.user),
+      user: withSellerVerifiedUser(ad.user),
     },
   };
 }
@@ -930,6 +981,12 @@ router.post("/", requireAuth, requireActiveUser, requireVerifiedEmail, async (re
       return res.status(400).json({ success: false, message: "Selected category is invalid. Please choose another category." });
     }
 
+    const sellerVerification = await prisma.verificationApplication.findUnique({
+      where: { userId: req.auth!.userId },
+      select: { status: true },
+    });
+    const launchOfferApplied = env.freeVerifiedSellerAds && sellerVerification?.status === "APPROVED";
+
     const ad = await prisma.ad.create({
       data: {
         userId: req.auth!.userId,
@@ -966,7 +1023,11 @@ router.post("/", requireAuth, requireActiveUser, requireVerifiedEmail, async (re
         console.error("Failed to notify followers about new ad", notificationError);
       });
 
-    res.status(201).json({ success: true, data: ad });
+    res.status(201).json({
+      success: true,
+      data: withSellerVerifiedAd(ad),
+      ...(launchOfferApplied ? { message: "Ad created. Launch offer applied for verified seller." } : {}),
+    });
   } catch (e) {
     next(e);
   }
@@ -999,22 +1060,24 @@ router.patch("/:id", requireAuth, requireActiveUser, async (req, res, next) => {
     );
     const { imageUrls, ...adFields } = b;
     const data = { ...adFields, specifications: b.specifications as any } as any;
+    const updatedAd = await prisma.$transaction(async (tx) => {
+      if (imageUrls) {
+        await tx.adImage.deleteMany({ where: { adId: id } });
+      }
+
+      return tx.ad.update({
+        where: { id },
+        data: {
+          ...data,
+          ...(imageUrls ? { images: { createMany: { data: imageUrls.map((url, index) => ({ url, position: index })) } } } : {}),
+        },
+        select: adDetailSelect,
+      });
+    });
+
     res.json({
       success: true,
-      data: await prisma.$transaction(async (tx) => {
-        if (imageUrls) {
-          await tx.adImage.deleteMany({ where: { adId: id } });
-        }
-
-        return tx.ad.update({
-          where: { id },
-          data: {
-            ...data,
-            ...(imageUrls ? { images: { createMany: { data: imageUrls.map((url, index) => ({ url, position: index })) } } } : {}),
-          },
-          select: adDetailSelect,
-        });
-      }),
+      data: withSellerVerifiedAd(updatedAd),
     });
     clearAdCaches(id);
   } catch (e) {
@@ -1233,7 +1296,7 @@ router.patch("/:id/mark-unavailable", requireAuth, async (req, res, next) => {
       select: adDetailSelect,
     });
     clearAdCaches(id);
-    res.json({ success: true, message: "Ad marked unavailable", data: updated });
+    res.json({ success: true, message: "Ad marked unavailable", data: withSellerVerifiedAd(updated) });
   } catch (e) {
     next(e);
   }
