@@ -44,6 +44,33 @@ const pageQuerySchema = z.object({
   pageSize: z.coerce.number().int().min(1).max(100).default(50),
 });
 
+const adminUsersQuerySchema = z.object({
+  search: z.string().trim().optional(),
+  role: z.enum(["USER", "ADMIN"]).optional(),
+  status: z.enum(["ACTIVE", "BANNED"]).optional(),
+});
+
+const adminAdsQuerySchema = z.object({
+  search: z.string().trim().optional(),
+  status: z.enum(["ACTIVE", "ARCHIVED", "SOLD", "DRAFT"]).optional(),
+});
+
+const adminReportsQuerySchema = z.object({
+  search: z.string().trim().optional(),
+  status: z.enum(["PENDING", "RESOLVED", "DISMISSED"]).optional(),
+});
+
+const adminReviewsQuerySchema = z.object({
+  search: z.string().trim().optional(),
+});
+
+const adminVerificationsQuerySchema = z.object({
+  search: z.string().trim().optional(),
+  status: z.enum(["DRAFT", "SUBMITTED", "IN_REVIEW", "APPROVED", "REJECTED"]).optional(),
+  from: z.string().trim().optional(),
+  to: z.string().trim().optional(),
+});
+
 const safeAdminUserSelect = {
   id: true,
   email: true,
@@ -171,7 +198,28 @@ router.get("/stats", async (_req: Request, res: Response) => {
 router.get("/users", async (req: Request, res: Response) => {
   try {
     const { page, pageSize, skip } = getPage(req);
-    const cacheKey = getCacheKey("/admin/users", { page, pageSize });
+    const query = parseOrThrow(adminUsersQuerySchema, req.query);
+    const search = query.search?.toLowerCase();
+
+    const where: Prisma.UserWhereInput = {};
+    if (query.role) where.role = query.role;
+    if (query.status) where.status = query.status;
+    if (search) {
+      where.OR = [
+        { fullName: { contains: search, mode: "insensitive" } },
+        { email: { contains: search, mode: "insensitive" } },
+        { phone: { contains: search, mode: "insensitive" } },
+        { location: { contains: search, mode: "insensitive" } },
+      ];
+    }
+
+    const cacheKey = getCacheKey("/admin/users", {
+      page,
+      pageSize,
+      search: query.search,
+      role: query.role,
+      status: query.status,
+    });
     const cached = getCached(cacheKey);
     if (cached) {
       return res.json({ success: true, data: cached.data, meta: cached.meta, _cached: true });
@@ -179,12 +227,13 @@ router.get("/users", async (req: Request, res: Response) => {
 
     const [users, total] = await prisma.$transaction([
       prisma.user.findMany({
+        where,
         select: safeAdminUserSelect,
         orderBy: { createdAt: "desc" },
         skip,
         take: pageSize,
       }),
-      prisma.user.count(),
+      prisma.user.count({ where }),
     ]);
 
     const cacheData = { data: users, meta: { page, pageSize, total } };
@@ -199,7 +248,25 @@ router.get("/users", async (req: Request, res: Response) => {
 router.get("/ads", async (req: Request, res: Response) => {
   try {
     const { page, pageSize, skip } = getPage(req);
-    const cacheKey = getCacheKey("/admin/ads", { page, pageSize });
+    const query = parseOrThrow(adminAdsQuerySchema, req.query);
+    const search = query.search?.toLowerCase();
+
+    const where: Prisma.AdWhereInput = {};
+    if (query.status) where.status = query.status;
+    if (search) {
+      where.OR = [
+        { title: { contains: search, mode: "insensitive" } },
+        { user: { is: { fullName: { contains: search, mode: "insensitive" } } } },
+        { category: { is: { name: { contains: search, mode: "insensitive" } } } },
+      ];
+    }
+
+    const cacheKey = getCacheKey("/admin/ads", {
+      page,
+      pageSize,
+      search: query.search,
+      status: query.status,
+    });
     const cached = getCached(cacheKey);
     if (cached) {
       return res.json({ success: true, data: cached.data, meta: cached.meta, _cached: true });
@@ -207,6 +274,7 @@ router.get("/ads", async (req: Request, res: Response) => {
 
     const [ads, total] = await prisma.$transaction([
       prisma.ad.findMany({
+        where,
         include: {
           user: {
             select: { id: true, fullName: true, email: true, status: true },
@@ -220,7 +288,7 @@ router.get("/ads", async (req: Request, res: Response) => {
         skip,
         take: pageSize,
       }),
-      prisma.ad.count(),
+      prisma.ad.count({ where }),
     ]);
 
     const cacheData = { data: ads, meta: { page, pageSize, total } };
@@ -281,7 +349,28 @@ router.patch("/ads/:id/status", async (req: Request, res: Response) => {
 router.get("/reports", async (req: Request, res: Response) => {
   try {
     const { page, pageSize, skip } = getPage(req);
-    const cacheKey = getCacheKey("/admin/reports", { page, pageSize });
+    const query = parseOrThrow(adminReportsQuerySchema, req.query);
+    const search = query.search?.toLowerCase();
+
+    const where: Prisma.ReportWhereInput = {};
+    if (query.status) where.status = query.status;
+    if (search) {
+      where.OR = [
+        { reason: { contains: search, mode: "insensitive" } },
+        { ad: { is: { title: { contains: search, mode: "insensitive" } } } },
+        { user: { is: { fullName: { contains: search, mode: "insensitive" } } } },
+        { user: { is: { email: { contains: search, mode: "insensitive" } } } },
+        { ad: { is: { user: { is: { fullName: { contains: search, mode: "insensitive" } } } } } },
+        { ad: { is: { user: { is: { email: { contains: search, mode: "insensitive" } } } } } },
+      ];
+    }
+
+    const cacheKey = getCacheKey("/admin/reports", {
+      page,
+      pageSize,
+      search: query.search,
+      status: query.status,
+    });
     const cached = getCached(cacheKey);
     if (cached) {
       return res.json({ success: true, data: cached.data, meta: cached.meta, _cached: true });
@@ -289,6 +378,7 @@ router.get("/reports", async (req: Request, res: Response) => {
 
     const [reports, total] = await prisma.$transaction([
       prisma.report.findMany({
+        where,
         include: {
           ad: {
             select: { id: true, title: true },
@@ -301,7 +391,7 @@ router.get("/reports", async (req: Request, res: Response) => {
         skip,
         take: pageSize,
       }),
-      prisma.report.count(),
+      prisma.report.count({ where }),
     ]);
 
     const cacheData = { data: reports, meta: { page, pageSize, total } };
@@ -316,7 +406,26 @@ router.get("/reports", async (req: Request, res: Response) => {
 router.get("/reviews", async (req: Request, res: Response) => {
   try {
     const { page, pageSize, skip } = getPage(req);
-    const cacheKey = getCacheKey("/admin/reviews", { page, pageSize });
+    const query = parseOrThrow(adminReviewsQuerySchema, req.query);
+    const search = query.search?.toLowerCase();
+
+    const where: Prisma.ReviewWhereInput = {};
+    if (search) {
+      where.OR = [
+        { text: { contains: search, mode: "insensitive" } },
+        { user: { is: { fullName: { contains: search, mode: "insensitive" } } } },
+        { user: { is: { email: { contains: search, mode: "insensitive" } } } },
+        { ad: { is: { title: { contains: search, mode: "insensitive" } } } },
+        { ad: { is: { user: { is: { fullName: { contains: search, mode: "insensitive" } } } } } },
+        { ad: { is: { user: { is: { email: { contains: search, mode: "insensitive" } } } } } },
+      ];
+    }
+
+    const cacheKey = getCacheKey("/admin/reviews", {
+      page,
+      pageSize,
+      search: query.search,
+    });
     const cached = getCached(cacheKey);
     if (cached) {
       return res.json({ success: true, data: cached.data, meta: cached.meta, _cached: true });
@@ -324,6 +433,7 @@ router.get("/reviews", async (req: Request, res: Response) => {
 
     const [reviews, total] = await prisma.$transaction([
       prisma.review.findMany({
+        where,
         include: {
           ad: {
             select: {
@@ -343,7 +453,7 @@ router.get("/reviews", async (req: Request, res: Response) => {
         skip,
         take: pageSize,
       }),
-      prisma.review.count(),
+      prisma.review.count({ where }),
     ]);
 
     const cacheData = { data: reviews, meta: { page, pageSize, total } };
@@ -481,10 +591,62 @@ router.patch("/reports/:id", async (req: Request, res: Response) => {
 router.get("/verifications", async (req: Request, res: Response) => {
   try {
     const { page, pageSize, skip } = getPage(req);
-    const status = String(req.query.status ?? "").trim();
-    const where = status ? { status: status as any } : {};
+    const query = parseOrThrow(adminVerificationsQuerySchema, req.query);
 
-    const cacheKey = getCacheKey("/admin/verifications", { page, pageSize, status });
+    const where: Prisma.VerificationApplicationWhereInput = {};
+    if (query.status) where.status = query.status;
+
+    const search = query.search?.toLowerCase();
+    if (search) {
+      where.OR = [
+        {
+          user: {
+            is: {
+              OR: [
+                { fullName: { contains: search, mode: "insensitive" } },
+                { email: { contains: search, mode: "insensitive" } },
+                { phone: { contains: search, mode: "insensitive" } },
+                { location: { contains: search, mode: "insensitive" } },
+              ],
+            },
+          },
+        },
+        {
+          reviewer: {
+            is: {
+              OR: [
+                { fullName: { contains: search, mode: "insensitive" } },
+                { email: { contains: search, mode: "insensitive" } },
+              ],
+            },
+          },
+        },
+      ];
+    }
+
+    if (query.from || query.to) {
+      where.createdAt = {};
+      if (query.from) {
+        const fromDate = new Date(query.from);
+        if (!isNaN(fromDate.getTime())) (where.createdAt as Prisma.DateTimeFilter).gte = fromDate;
+      }
+      if (query.to) {
+        const toDate = new Date(query.to);
+        if (!isNaN(toDate.getTime())) {
+          toDate.setHours(23, 59, 59, 999);
+          (where.createdAt as Prisma.DateTimeFilter).lte = toDate;
+        }
+      }
+    }
+
+    const cacheKey = getCacheKey("/admin/verifications", {
+      page,
+      pageSize,
+      status: query.status,
+      search: query.search,
+      from: query.from,
+      to: query.to,
+    });
     const cached = getCached(cacheKey);
     if (cached) {
       return res.json({ success: true, data: cached.data, meta: cached.meta, _cached: true });
@@ -667,6 +829,7 @@ router.post("/users/:id/unban", async (req: Request, res: Response) => {
 });
 
 const auditLogQuerySchema = z.object({
+  search: z.string().trim().optional(),
   action: z.string().trim().optional(),
   targetType: z.string().trim().optional(),
   from: z.string().trim().optional(),
@@ -679,7 +842,15 @@ router.get("/audit-log", async (req: Request, res: Response) => {
     const query = parseOrThrow(auditLogQuerySchema, req.query);
 
     // Generate cache key - include query filters
-    const cacheKey = getCacheKey("/admin/audit-log", { page, pageSize, action: query.action, targetType: query.targetType });
+    const cacheKey = getCacheKey("/admin/audit-log", {
+      page,
+      pageSize,
+      search: query.search,
+      action: query.action,
+      targetType: query.targetType,
+      from: query.from,
+      to: query.to,
+    });
     const cached = getCached(cacheKey);
     if (cached) {
       return res.json({ success: true, data: cached.data, meta: cached.meta, _cached: true });
@@ -688,6 +859,24 @@ router.get("/audit-log", async (req: Request, res: Response) => {
     const where: Prisma.AdminAuditLogWhereInput = {};
     if (query.action) where.action = query.action;
     if (query.targetType) where.targetType = query.targetType;
+    const search = query.search?.toLowerCase();
+    if (search) {
+      where.OR = [
+        { action: { contains: search, mode: "insensitive" } },
+        { targetType: { contains: search, mode: "insensitive" } },
+        { targetId: { contains: search, mode: "insensitive" } },
+        {
+          admin: {
+            is: {
+              OR: [
+                { fullName: { contains: search, mode: "insensitive" } },
+                { email: { contains: search, mode: "insensitive" } },
+              ],
+            },
+          },
+        },
+      ];
+    }
     if (query.from || query.to) {
       where.createdAt = {};
       if (query.from) {
