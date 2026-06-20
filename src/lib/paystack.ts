@@ -60,7 +60,13 @@ async function paystackRequest<T>(path: string, init: RequestInit = {}) {
 }
 
 export function createPaystackReference(paymentId: string) {
-  return `qwik_${paymentId}_${crypto.randomBytes(6).toString("hex")}`;
+  void paymentId;
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  let suffix = "";
+  for (let i = 0; i < 10; i += 1) {
+    suffix += alphabet[crypto.randomInt(alphabet.length)];
+  }
+  return `QWK-P-${suffix}`;
 }
 
 export function verifyPaystackSignature(rawBody: Buffer | undefined, signature: string | string[] | undefined) {
