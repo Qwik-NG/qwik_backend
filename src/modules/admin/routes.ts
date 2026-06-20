@@ -26,6 +26,10 @@ const banUserSchema = z.object({
   reason: z.string().trim().min(3).max(500).optional(),
 });
 
+const deleteUserSchema = z.object({
+  reason: z.string().trim().min(3).max(500).optional(),
+});
+
 const adModerationSchema = z.object({
   status: z.enum(["ACTIVE", "ARCHIVED"]),
   reason: z.string().trim().min(3).max(500).optional(),
@@ -825,6 +829,44 @@ router.post("/users/:id/unban", async (req: Request, res: Response) => {
     res.json({ success: true, message: "User restored successfully", data: user });
   } catch {
     res.status(500).json({ success: false, message: "Failed to restore user" });
+  }
+});
+
+router.delete("/users/:id", async (req: Request, res: Response) => {
+  try {
+    const id = String(req.params.id);
+    if (id === req.auth?.userId) {
+      return res.status(400).json({ success: false, message: "Admins cannot delete their own account" });
+    }
+
+    const body = parseOrThrow(deleteUserSchema, req.body ?? {});
+    const existing = await prisma.user.findUnique({
+      where: { id },
+      select: { id: true, role: true, status: true, fullName: true, email: true },
+    });
+
+    if (!existing) return notFound(res, "User not found");
+    if (existing.role === "ADMIN") {
+      return res.status(400).json({ success: false, message: "Admin accounts cannot be deleted here" });
+    }
+
+    await prisma.user.delete({ where: { id } });
+
+    // Invalidate related caches
+    invalidateCache("/admin/users", "/admin/stats", "/admin/audit-log");
+    adminAccessCache.delete(id);
+
+    await auditAdminAction(req, "USER_DELETED", "User", id, {
+      fullName: existing.fullName,
+      email: existing.email,
+      previousStatus: existing.status,
+      reason: body.reason ?? null,
+    });
+
+    res.json({ success: true, data: null, message: "User deleted successfully" });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to delete user";
+    res.status(message.includes("Invalid") ? 400 : 500).json({ success: false, message });
   }
 });
 

@@ -22,6 +22,9 @@ const verificationReviewSchema = zod_1.z.object({
 const banUserSchema = zod_1.z.object({
     reason: zod_1.z.string().trim().min(3).max(500).optional(),
 });
+const deleteUserSchema = zod_1.z.object({
+    reason: zod_1.z.string().trim().min(3).max(500).optional(),
+});
 const adModerationSchema = zod_1.z.object({
     status: zod_1.z.enum(["ACTIVE", "ARCHIVED"]),
     reason: zod_1.z.string().trim().min(3).max(500).optional(),
@@ -752,6 +755,39 @@ router.post("/users/:id/unban", async (req, res) => {
     }
     catch {
         res.status(500).json({ success: false, message: "Failed to restore user" });
+    }
+});
+router.delete("/users/:id", async (req, res) => {
+    try {
+        const id = String(req.params.id);
+        if (id === req.auth?.userId) {
+            return res.status(400).json({ success: false, message: "Admins cannot delete their own account" });
+        }
+        const body = (0, validation_1.parseOrThrow)(deleteUserSchema, req.body ?? {});
+        const existing = await prisma_1.prisma.user.findUnique({
+            where: { id },
+            select: { id: true, role: true, status: true, fullName: true, email: true },
+        });
+        if (!existing)
+            return notFound(res, "User not found");
+        if (existing.role === "ADMIN") {
+            return res.status(400).json({ success: false, message: "Admin accounts cannot be deleted here" });
+        }
+        await prisma_1.prisma.user.delete({ where: { id } });
+        // Invalidate related caches
+        (0, admin_cache_1.invalidateCache)("/admin/users", "/admin/stats", "/admin/audit-log");
+        adminAccessCache.delete(id);
+        await auditAdminAction(req, "USER_DELETED", "User", id, {
+            fullName: existing.fullName,
+            email: existing.email,
+            previousStatus: existing.status,
+            reason: body.reason ?? null,
+        });
+        res.json({ success: true, data: null, message: "User deleted successfully" });
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to delete user";
+        res.status(message.includes("Invalid") ? 400 : 500).json({ success: false, message });
     }
 });
 const auditLogQuerySchema = zod_1.z.object({
