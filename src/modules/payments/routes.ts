@@ -328,6 +328,17 @@ router.post("/webhook", async (req, res, next) => {
       return res.status(400).json({ success: false, message: "Paystack updates must use signed Paystack webhook events" });
     }
 
+    const targetPayment = await prisma.paymentTransaction.findUnique({
+      where: { id: body.paymentId },
+      select: { id: true, provider: true },
+    });
+    if (!targetPayment) {
+      return res.status(404).json({ success: false, message: "Payment not found" });
+    }
+    if (targetPayment.provider.toLowerCase() === "paystack") {
+      return res.status(400).json({ success: false, message: "Paystack payments can only be updated via verify or signed Paystack webhooks" });
+    }
+
     const existingEvent = await prisma.paymentWebhookEvent.findUnique({
       where: { providerEventId: body.eventId },
     });
