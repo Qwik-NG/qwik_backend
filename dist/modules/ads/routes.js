@@ -6,6 +6,7 @@ const client_1 = require("@prisma/client");
 const zod_1 = require("zod");
 const prisma_1 = require("../../lib/prisma");
 const realtime_1 = require("../../lib/realtime");
+const env_1 = require("../../config/env");
 const validation_1 = require("../../utils/validation");
 const auth_1 = require("../../middleware/auth");
 const paymentPricing_1 = require("../../utils/paymentPricing");
@@ -253,6 +254,36 @@ function asArray(value) {
 function toJsonObject(value) {
     return value && typeof value === "object" ? value : {};
 }
+function sellerVerifiedFromUser(user) {
+    const userObject = toJsonObject(user);
+    if (typeof userObject.sellerVerified === "boolean") {
+        return userObject.sellerVerified;
+    }
+    const latestVerification = Array.isArray(userObject.verificationApplications)
+        ? userObject.verificationApplications[0]
+        : undefined;
+    return latestVerification?.status === "APPROVED";
+}
+function withSellerVerifiedUser(user) {
+    const userObject = toJsonObject(user);
+    const verified = sellerVerifiedFromUser(userObject);
+    const profile = toJsonObject(userObject.profile);
+    return {
+        ...userObject,
+        sellerVerified: verified,
+        profile: {
+            ...profile,
+            verified,
+            verificationStatus: verified ? "verified" : "pending",
+        },
+    };
+}
+function withSellerVerifiedAd(ad) {
+    return {
+        ...ad,
+        user: withSellerVerifiedUser(ad.user),
+    };
+}
 function buildWhereClause(input) {
     const params = [];
     const clauses = [];
@@ -437,7 +468,12 @@ async function buildAdsListPayload(query, perf) {
           'locationState', u."locationState",
           'locationArea', u."locationArea",
           'role', u."role"::text,
-          'profile', jsonb_build_object('avatarUrl', up."avatarUrl"),
+          'sellerVerified', CASE WHEN va."status" = 'APPROVED'::"VerificationStatus" THEN true ELSE false END,
+          'profile', jsonb_build_object(
+            'avatarUrl', up."avatarUrl",
+            'verified', CASE WHEN va."status" = 'APPROVED'::"VerificationStatus" THEN true ELSE false END,
+            'verificationStatus', CASE WHEN va."status" = 'APPROVED'::"VerificationStatus" THEN 'verified' ELSE 'pending' END
+          ),
           'verificationApplications', CASE WHEN va."id" IS NULL THEN '[]'::jsonb ELSE jsonb_build_array(jsonb_build_object('id', va."id", 'status', va."status"::text, 'paymentStatus', va."paymentStatus"::text)) END
         ) AS "user"
       FROM "Ad" a
@@ -508,7 +544,7 @@ async function buildAdsListPayload(query, perf) {
         createdAt: row.createdAt,
         category: toJsonObject(row.category),
         images: asArray(row.images),
-        user: toJsonObject(row.user),
+        user: withSellerVerifiedUser(row.user),
     }));
     return {
         success: true,
@@ -553,7 +589,13 @@ async function buildAdDetailsPayload(id, perf) {
               'locationArea', u."locationArea",
               'role', u."role"::text,
               'createdAt', u."createdAt",
-              'profile', jsonb_build_object('bio', up."bio", 'avatarUrl', up."avatarUrl"),
+              'sellerVerified', CASE WHEN va."status" = 'APPROVED'::"VerificationStatus" THEN true ELSE false END,
+              'profile', jsonb_build_object(
+                'bio', up."bio",
+                'avatarUrl', up."avatarUrl",
+                'verified', CASE WHEN va."status" = 'APPROVED'::"VerificationStatus" THEN true ELSE false END,
+                'verificationStatus', CASE WHEN va."status" = 'APPROVED'::"VerificationStatus" THEN 'verified' ELSE 'pending' END
+              ),
               'verificationApplications', CASE WHEN va."id" IS NULL THEN '[]'::jsonb ELSE jsonb_build_array(jsonb_build_object('id', va."id", 'status', va."status"::text, 'paymentStatus', va."paymentStatus"::text)) END
             ) AS "user"
           FROM "Ad" a
@@ -611,7 +653,13 @@ async function buildAdDetailsPayload(id, perf) {
             'locationArea', u."locationArea",
             'role', u."role"::text,
             'createdAt', u."createdAt",
-            'profile', jsonb_build_object('bio', up."bio", 'avatarUrl', up."avatarUrl"),
+            'sellerVerified', CASE WHEN va."status" = 'APPROVED'::"VerificationStatus" THEN true ELSE false END,
+            'profile', jsonb_build_object(
+              'bio', up."bio",
+              'avatarUrl', up."avatarUrl",
+              'verified', CASE WHEN va."status" = 'APPROVED'::"VerificationStatus" THEN true ELSE false END,
+              'verificationStatus', CASE WHEN va."status" = 'APPROVED'::"VerificationStatus" THEN 'verified' ELSE 'pending' END
+            ),
             'verificationApplications', CASE WHEN va."id" IS NULL THEN '[]'::jsonb ELSE jsonb_build_array(jsonb_build_object('id', va."id", 'status', va."status"::text, 'paymentStatus', va."paymentStatus"::text)) END
           ) AS "user"
         FROM "Ad" a
@@ -664,7 +712,7 @@ async function buildAdDetailsPayload(id, perf) {
             updatedAt: ad.updatedAt,
             category: toJsonObject(ad.category),
             images: asArray(ad.images),
-            user: toJsonObject(ad.user),
+            user: withSellerVerifiedUser(ad.user),
         },
     };
 }
@@ -749,6 +797,11 @@ router.post("/", auth_1.requireAuth, auth_1.requireActiveUser, auth_1.requireVer
         if (!category) {
             return res.status(400).json({ success: false, message: "Selected category is invalid. Please choose another category." });
         }
+        const sellerVerification = await prisma_1.prisma.verificationApplication.findUnique({
+            where: { userId: req.auth.userId },
+            select: { status: true },
+        });
+        const launchOfferApplied = env_1.env.freeVerifiedSellerAds && sellerVerification?.status === "APPROVED";
         const ad = await prisma_1.prisma.ad.create({
             data: {
                 userId: req.auth.userId,
@@ -782,7 +835,11 @@ router.post("/", auth_1.requireAuth, auth_1.requireActiveUser, auth_1.requireVer
             .catch((notificationError) => {
             console.error("Failed to notify followers about new ad", notificationError);
         });
-        res.status(201).json({ success: true, data: ad });
+        res.status(201).json({
+            success: true,
+            data: withSellerVerifiedAd(ad),
+            ...(launchOfferApplied ? { message: "Ad created. Launch offer applied for verified seller." } : {}),
+        });
     }
     catch (e) {
         next(e);
@@ -812,21 +869,22 @@ router.patch("/:id", auth_1.requireAuth, auth_1.requireActiveUser, async (req, r
         }), req.body);
         const { imageUrls, ...adFields } = b;
         const data = { ...adFields, specifications: b.specifications };
+        const updatedAd = await prisma_1.prisma.$transaction(async (tx) => {
+            if (imageUrls) {
+                await tx.adImage.deleteMany({ where: { adId: id } });
+            }
+            return tx.ad.update({
+                where: { id },
+                data: {
+                    ...data,
+                    ...(imageUrls ? { images: { createMany: { data: imageUrls.map((url, index) => ({ url, position: index })) } } } : {}),
+                },
+                select: adDetailSelect,
+            });
+        });
         res.json({
             success: true,
-            data: await prisma_1.prisma.$transaction(async (tx) => {
-                if (imageUrls) {
-                    await tx.adImage.deleteMany({ where: { adId: id } });
-                }
-                return tx.ad.update({
-                    where: { id },
-                    data: {
-                        ...data,
-                        ...(imageUrls ? { images: { createMany: { data: imageUrls.map((url, index) => ({ url, position: index })) } } } : {}),
-                    },
-                    select: adDetailSelect,
-                });
-            }),
+            data: withSellerVerifiedAd(updatedAd),
         });
         clearAdCaches(id);
     }
@@ -1033,7 +1091,7 @@ router.patch("/:id/mark-unavailable", auth_1.requireAuth, async (req, res, next)
             select: adDetailSelect,
         });
         clearAdCaches(id);
-        res.json({ success: true, message: "Ad marked unavailable", data: updated });
+        res.json({ success: true, message: "Ad marked unavailable", data: withSellerVerifiedAd(updated) });
     }
     catch (e) {
         next(e);

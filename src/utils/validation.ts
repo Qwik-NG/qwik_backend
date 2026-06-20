@@ -24,6 +24,11 @@ export function validateImageUrl(url: string): boolean {
   try {
     const urlObj = new URL(url);
     const hostname = urlObj.hostname;
+    const protocol = urlObj.protocol;
+
+    if (protocol !== "http:" && protocol !== "https:") {
+      return false;
+    }
 
     // Always allow Cloudinary URLs
     if (hostname === "res.cloudinary.com") {

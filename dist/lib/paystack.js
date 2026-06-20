@@ -33,7 +33,13 @@ async function paystackRequest(path, init = {}) {
     return body;
 }
 function createPaystackReference(paymentId) {
-    return `qwik_${paymentId}_${crypto_1.default.randomBytes(6).toString("hex")}`;
+    void paymentId;
+    const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    let suffix = "";
+    for (let i = 0; i < 10; i += 1) {
+        suffix += alphabet[crypto_1.default.randomInt(alphabet.length)];
+    }
+    return `QWK-P-${suffix}`;
 }
 function verifyPaystackSignature(rawBody, signature) {
     if (!rawBody || typeof signature !== "string")

@@ -53,12 +53,25 @@ function paystackCallbackUrl(reference) {
     url.searchParams.set("reference", reference);
     return url.toString();
 }
+function frontendPaymentCallbackUrl(reference) {
+    const frontendBase = env_1.env.frontendUrl.split(",")[0].trim().replace(/\/$/, "");
+    const url = new URL(`${frontendBase}/payment/callback`);
+    url.searchParams.set("reference", reference);
+    return url.toString();
+}
 async function applyPaymentStatus(tx, input) {
     const payment = await tx.paymentTransaction.findUnique({ where: { id: input.paymentId } });
     if (!payment)
         throw Object.assign(new Error("Payment not found"), { status: 404 });
     if (input.expectedAmount !== undefined && payment.amount !== input.expectedAmount) {
         throw Object.assign(new Error("Payment amount mismatch"), { status: 400 });
+    }
+    // Preserve confirmed successful payments from late/duplicate failure events.
+    if (payment.status === "PAID" && input.status !== "PAID") {
+        return payment;
+    }
+    if (payment.status === input.status) {
+        return payment;
     }
     const updatedPayment = await tx.paymentTransaction.update({
         where: { id: input.paymentId },
@@ -77,8 +90,11 @@ async function applyPaymentStatus(tx, input) {
             },
         });
     }
-    if (updatedPayment.adId && updatedPayment.purpose === "AD_PROMOTION" && input.status === "PAID") {
-        await tx.ad.update({ where: { id: updatedPayment.adId }, data: { isPromoted: true } });
+    if (updatedPayment.adId
+        && updatedPayment.purpose === "AD_PROMOTION"
+        && input.status === "PAID"
+        && payment.status !== "PAID") {
+        await tx.ad.updateMany({ where: { id: updatedPayment.adId, isPromoted: false }, data: { isPromoted: true } });
     }
     return updatedPayment;
 }
@@ -198,16 +214,9 @@ router.get("/callback", async (req, res, next) => {
         const payment = await prisma_1.prisma.paymentTransaction.findUnique({ where: { providerRef: reference } });
         if (!payment)
             return res.status(404).json({ success: false, message: "Payment not found" });
-        const paystackPayment = await (0, paystack_1.verifyPaystackTransaction)(reference);
-        const status = (0, paystack_1.mapPaystackStatus)(paystackPayment.status);
-        const result = await prisma_1.prisma.$transaction((tx) => applyPaymentStatus(tx, {
-            paymentId: payment.id,
-            status,
-            provider: "paystack",
-            providerRef: reference,
-            expectedAmount: paystackPayment.amount,
-        }));
-        res.json({ success: true, data: paymentResponse(result), message: status === "PAID" ? "Payment verified" : "Payment is not complete" });
+        // Public callback endpoint only redirects user back to frontend.
+        // Payment state mutation must happen through authenticated /verify.
+        res.redirect(303, frontendPaymentCallbackUrl(payment.providerRef ?? reference));
     }
     catch (e) {
         next(e);
@@ -248,7 +257,11 @@ router.post("/webhook", async (req, res, next) => {
             const payment = await prisma_1.prisma.paymentTransaction.findUnique({ where: { providerRef: reference } });
             if (!payment)
                 return res.status(404).json({ success: false, message: "Payment not found" });
-            const status = event === "charge.success" ? (0, paystack_1.mapPaystackStatus)(String(data.status ?? "success")) : (0, paystack_1.mapPaystackStatus)(String(data.status ?? "pending"));
+            const verifiedPayment = await (0, paystack_1.verifyPaystackTransaction)(reference);
+            if (verifiedPayment.reference !== reference) {
+                return res.status(400).json({ success: false, message: "Payment reference mismatch" });
+            }
+            const status = (0, paystack_1.mapPaystackStatus)(verifiedPayment.status);
             const result = await prisma_1.prisma.$transaction(async (tx) => {
                 await tx.paymentWebhookEvent.create({
                     data: { provider: "paystack", providerEventId, payload: req.body },
@@ -258,7 +271,7 @@ router.post("/webhook", async (req, res, next) => {
                     status,
                     provider: "paystack",
                     providerRef: reference,
-                    expectedAmount: amount,
+                    expectedAmount: verifiedPayment.amount,
                 });
             });
             return res.json({ success: true, data: result, message: "Webhook processed" });
@@ -268,6 +281,19 @@ router.post("/webhook", async (req, res, next) => {
             return res.status(401).json({ success: false, message: "Unauthorized" });
         }
         const body = (0, validation_1.parseOrThrow)(webhookSchema, req.body);
+        if (body.provider.toLowerCase() === "paystack") {
+            return res.status(400).json({ success: false, message: "Paystack updates must use signed Paystack webhook events" });
+        }
+        const targetPayment = await prisma_1.prisma.paymentTransaction.findUnique({
+            where: { id: body.paymentId },
+            select: { id: true, provider: true },
+        });
+        if (!targetPayment) {
+            return res.status(404).json({ success: false, message: "Payment not found" });
+        }
+        if (targetPayment.provider.toLowerCase() === "paystack") {
+            return res.status(400).json({ success: false, message: "Paystack payments can only be updated via verify or signed Paystack webhooks" });
+        }
         const existingEvent = await prisma_1.prisma.paymentWebhookEvent.findUnique({
             where: { providerEventId: body.eventId },
         });
