@@ -251,6 +251,11 @@ router.get("/ads", async (req, res) => {
                         select: { id: true, fullName: true, email: true, status: true },
                     },
                     category: true,
+                    images: {
+                        select: { id: true, url: true, position: true },
+                        orderBy: { position: "asc" },
+                        take: 1,
+                    },
                     _count: {
                         select: { images: true, reviews: true, reports: true },
                     },
@@ -287,6 +292,11 @@ router.patch("/ads/:id/status", async (req, res) => {
                     select: { id: true, fullName: true, email: true, status: true },
                 },
                 category: true,
+                images: {
+                    select: { id: true, url: true, position: true },
+                    orderBy: { position: "asc" },
+                    take: 1,
+                },
                 _count: {
                     select: { images: true, reviews: true, reports: true },
                 },

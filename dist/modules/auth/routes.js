@@ -63,9 +63,9 @@ async function sendPasswordResetEmail(email, resetToken) {
     await resend.emails.send({
         from: env_1.env.resendFromEmail,
         to: email,
-        subject: "Reset your Qwik password",
-        text: `Use this link to reset your Qwik password: ${link}\n\nThis link expires in 30 minutes.`,
-        html: `<p>Use this link to reset your Qwik password:</p><p><a href="${link}">Reset password</a></p><p>This link expires in 30 minutes.</p>`,
+        subject: "Reset your Qwik.ng password",
+        text: `Use this link to reset your Qwik.ng password: ${link}\n\nThis link expires in 30 minutes.`,
+        html: `<p>Use this link to reset your Qwik.ng password:</p><p><a href="${link}">Reset password</a></p><p>This link expires in 30 minutes.</p>`,
     });
 }
 async function sendVerificationOtpEmail(email, fullName, otp) {
@@ -77,9 +77,9 @@ async function sendVerificationOtpEmail(email, fullName, otp) {
     const result = await resend.emails.send({
         from: env_1.env.resendFromEmail,
         to: email,
-        subject: "Verify your Qwik email",
-        text: `Hi ${safeName},\n\nYour Qwik verification code is: ${otp}\n\nThis code expires in 10 minutes.\n\nDo not share this code with anyone.`,
-        html: `<p>Hi ${safeName},</p><p>Your Qwik verification code is:</p><p style="font-size: 24px; font-weight: bold; letter-spacing: 2px; font-family: monospace;">${otp}</p><p>This code expires in 10 minutes.</p><p><strong>Do not share this code with anyone.</strong></p>`,
+        subject: "Verify your Qwik.ng email",
+        text: `Hi ${safeName},\n\nYour Qwik.ng verification code is: ${otp}\n\nThis code expires in 10 minutes.\n\nDo not share this code with anyone.`,
+        html: `<p>Hi ${safeName},</p><p>Your Qwik.ng verification code is:</p><p style="font-size: 24px; font-weight: bold; letter-spacing: 2px; font-family: monospace;">${otp}</p><p>This code expires in 10 minutes.</p><p><strong>Do not share this code with anyone.</strong></p>`,
     });
     if (result.error) {
         throw new Error(result.error.message || "Failed to send verification OTP email");
