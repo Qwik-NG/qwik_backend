@@ -35,11 +35,19 @@ async function main() {
       throw new Error('Electronics category was not created');
     }
 
+    const vehicles = topCategories.find((category) => category.slug === 'vehicles');
+    if (!vehicles) {
+      throw new Error('Vehicles category was not created');
+    }
+
     await prisma.category.createMany({
       data: [
         { name: 'Laptops', slug: 'laptops', parentId: electronics.id },
         { name: 'Desktop Computers', slug: 'desktop-computers', parentId: electronics.id },
         { name: 'Servers', slug: 'servers', parentId: electronics.id },
+        { name: 'Cars', slug: 'cars', parentId: vehicles.id },
+        { name: 'Motorcycles', slug: 'motorcycles', parentId: vehicles.id },
+        { name: 'Trucks & Buses', slug: 'trucks-buses', parentId: vehicles.id },
       ],
     });
     console.log('✓ Categories created');
