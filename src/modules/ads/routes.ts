@@ -1257,6 +1257,8 @@ router.patch("/:id", requireAuth, requireActiveUser, async (req, res, next) => {
       return res.status(403).json({ success: false, message: "Forbidden" });
     const b = parseOrThrow(
       z.object({
+        categoryId: z.string().min(1).optional(),
+        subcategoryId: z.string().min(1).optional(),
         title: adTitleSchema.optional(),
         description: adDescriptionSchema.optional(),
         price: z.number().nonnegative().optional(),
@@ -1272,8 +1274,53 @@ router.patch("/:id", requireAuth, requireActiveUser, async (req, res, next) => {
       }),
       req.body,
     );
-    const { imageUrls, ...adFields } = b;
-    const data = { ...adFields, specifications: b.specifications as any } as any;
+    const { imageUrls, categoryId, subcategoryId, ...adFields } = b;
+
+    let nextCategoryId = categoryId;
+    if (subcategoryId) {
+      const selectedSubcategory = await prisma.category.findUnique({
+        where: { id: subcategoryId },
+        select: { id: true, parentId: true },
+      });
+
+      if (!selectedSubcategory) {
+        return res.status(400).json({ success: false, message: "Selected subcategory is invalid. Please choose another one." });
+      }
+
+      if (categoryId) {
+        const selectedCategory = await prisma.category.findUnique({
+          where: { id: categoryId },
+          select: { id: true },
+        });
+
+        if (!selectedCategory) {
+          return res.status(400).json({ success: false, message: "Selected category is invalid. Please choose another one." });
+        }
+
+        if (selectedSubcategory.parentId !== selectedCategory.id) {
+          return res.status(400).json({ success: false, message: "Selected subcategory does not belong to the chosen category." });
+        }
+      }
+
+      nextCategoryId = selectedSubcategory.id;
+    } else if (categoryId) {
+      const selectedCategory = await prisma.category.findUnique({
+        where: { id: categoryId },
+        select: { id: true },
+      });
+
+      if (!selectedCategory) {
+        return res.status(400).json({ success: false, message: "Selected category is invalid. Please choose another one." });
+      }
+
+      nextCategoryId = selectedCategory.id;
+    }
+
+    const data = {
+      ...adFields,
+      ...(nextCategoryId ? { categoryId: nextCategoryId } : {}),
+      specifications: b.specifications as any,
+    } as any;
     const updatedAd = await prisma.$transaction(async (tx) => {
       if (imageUrls) {
         await tx.adImage.deleteMany({ where: { adId: id } });

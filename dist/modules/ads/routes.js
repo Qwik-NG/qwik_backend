@@ -1036,6 +1036,8 @@ router.patch("/:id", auth_1.requireAuth, auth_1.requireActiveUser, async (req, r
         if (ad.userId !== req.auth.userId)
             return res.status(403).json({ success: false, message: "Forbidden" });
         const b = (0, validation_1.parseOrThrow)(zod_1.z.object({
+            categoryId: zod_1.z.string().min(1).optional(),
+            subcategoryId: zod_1.z.string().min(1).optional(),
             title: adTitleSchema.optional(),
             description: adDescriptionSchema.optional(),
             price: zod_1.z.number().nonnegative().optional(),
@@ -1049,8 +1051,45 @@ router.patch("/:id", auth_1.requireAuth, auth_1.requireActiveUser, async (req, r
             imageUrls: adImageUrlsSchema.optional(),
             status: zod_1.z.enum(["ACTIVE", "SOLD", "DRAFT", "ARCHIVED"]).optional(),
         }), req.body);
-        const { imageUrls, ...adFields } = b;
-        const data = { ...adFields, specifications: b.specifications };
+        const { imageUrls, categoryId, subcategoryId, ...adFields } = b;
+        let nextCategoryId = categoryId;
+        if (subcategoryId) {
+            const selectedSubcategory = await prisma_1.prisma.category.findUnique({
+                where: { id: subcategoryId },
+                select: { id: true, parentId: true },
+            });
+            if (!selectedSubcategory) {
+                return res.status(400).json({ success: false, message: "Selected subcategory is invalid. Please choose another one." });
+            }
+            if (categoryId) {
+                const selectedCategory = await prisma_1.prisma.category.findUnique({
+                    where: { id: categoryId },
+                    select: { id: true },
+                });
+                if (!selectedCategory) {
+                    return res.status(400).json({ success: false, message: "Selected category is invalid. Please choose another one." });
+                }
+                if (selectedSubcategory.parentId !== selectedCategory.id) {
+                    return res.status(400).json({ success: false, message: "Selected subcategory does not belong to the chosen category." });
+                }
+            }
+            nextCategoryId = selectedSubcategory.id;
+        }
+        else if (categoryId) {
+            const selectedCategory = await prisma_1.prisma.category.findUnique({
+                where: { id: categoryId },
+                select: { id: true },
+            });
+            if (!selectedCategory) {
+                return res.status(400).json({ success: false, message: "Selected category is invalid. Please choose another one." });
+            }
+            nextCategoryId = selectedCategory.id;
+        }
+        const data = {
+            ...adFields,
+            ...(nextCategoryId ? { categoryId: nextCategoryId } : {}),
+            specifications: b.specifications,
+        };
         const updatedAd = await prisma_1.prisma.$transaction(async (tx) => {
             if (imageUrls) {
                 await tx.adImage.deleteMany({ where: { adId: id } });
