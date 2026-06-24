@@ -899,6 +899,11 @@ const sendUserEmailSchema = zod_1.z.object({
     subject: zod_1.z.string().trim().min(1, "Subject is required").max(120, "Subject must be 120 characters or fewer"),
     message: zod_1.z.string().trim().min(1, "Message is required").max(5000, "Message must be 5000 characters or fewer"),
 });
+const sendSelectedSellersEmailSchema = zod_1.z.object({
+    userIds: zod_1.z.array(zod_1.z.string().trim().min(1, "userId is required")).min(1, "At least one seller must be selected").max(25, "A maximum of 25 sellers can be selected"),
+    subject: zod_1.z.string().trim().min(1, "Subject is required").max(120, "Subject must be 120 characters or fewer"),
+    message: zod_1.z.string().trim().min(1, "Message is required").max(5000, "Message must be 5000 characters or fewer"),
+});
 router.post("/communications/test-email", async (req, res) => {
     try {
         const body = (0, validation_1.parseOrThrow)(testEmailSchema, req.body ?? {});
@@ -1057,6 +1062,121 @@ router.post("/communications/send-user-email", async (req, res) => {
     }
     catch (error) {
         const message = error instanceof Error ? error.message : "Failed to send email to selected user";
+        return res.status(message.includes("Invalid") ? 400 : 500).json({ success: false, message });
+    }
+});
+router.post("/communications/send-selected-sellers-email", async (req, res) => {
+    try {
+        const body = (0, validation_1.parseOrThrow)(sendSelectedSellersEmailSchema, req.body ?? {});
+        const uniqueUserIds = Array.from(new Set(body.userIds));
+        const selectedUsers = await prisma_1.prisma.user.findMany({
+            where: { id: { in: uniqueUserIds } },
+            select: { id: true },
+        });
+        const eligibleSellers = await prisma_1.prisma.user.findMany({
+            where: {
+                id: { in: uniqueUserIds },
+                status: "ACTIVE",
+                ads: { some: {} },
+            },
+            select: { id: true, email: true, fullName: true },
+        });
+        const requestedCount = uniqueUserIds.length;
+        const eligibleCount = eligibleSellers.length;
+        const skippedNonSellerCount = requestedCount - eligibleCount;
+        if (!resend) {
+            if (env_1.env.isProduction) {
+                return res.status(503).json({ success: false, message: "Email service is not configured. Set RESEND_API_KEY." });
+            }
+            return res.json({
+                success: true,
+                data: {
+                    requestedCount,
+                    eligibleCount,
+                    sentCount: 0,
+                    failedCount: eligibleCount,
+                    skippedNonSellerCount,
+                },
+                message: "Email skipped (Resend not configured in this environment).",
+            });
+        }
+        const safeSubject = body.subject.trim().replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        const safeMessage = body.message.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        let sentCount = 0;
+        let failedCount = 0;
+        const failedRecipients = [];
+        for (const seller of eligibleSellers) {
+            if (!seller.email) {
+                failedCount += 1;
+                failedRecipients.push(seller.id);
+                continue;
+            }
+            const result = await resend.emails.send({
+                from: env_1.env.resendFromEmail,
+                to: seller.email,
+                subject: safeSubject,
+                html: `
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f3f3f5;font-family:sans-serif">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f3f3f5;padding:32px 0">
+    <tr><td align="center">
+      <table width="100%" style="max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e8e8ea">
+        <tr><td style="background:#ff9715;padding:20px 28px">
+          <span style="font-size:26px;font-weight:400;color:#ffffff;letter-spacing:-0.5px">qwik</span>
+          <span style="display:block;font-size:11px;color:rgba(255,255,255,0.8);margin-top:2px">Admin Communication</span>
+        </td></tr>
+        <tr><td style="padding:28px">
+          <p style="margin:0 0 8px;font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#9a99a6">Subject</p>
+          <p style="margin:0 0 20px;font-size:18px;font-weight:600;color:#1f1f29">${safeSubject}</p>
+          <p style="margin:0 0 8px;font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#9a99a6">Message</p>
+          <div style="background:#f8f8fa;border-radius:8px;padding:16px;font-size:15px;line-height:1.6;color:#3a3743;white-space:pre-wrap">${safeMessage}</div>
+        </td></tr>
+        <tr><td style="padding:16px 28px 24px;border-top:1px solid #f0f0f2">
+          <p style="margin:0;font-size:12px;color:#9a99a6">This email was sent by Qwik.ng admin communications.</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`,
+                text: `${body.subject}\n\n${body.message}`,
+            });
+            if (result.error) {
+                failedCount += 1;
+                failedRecipients.push(seller.id);
+            }
+            else {
+                sentCount += 1;
+            }
+        }
+        await auditAdminAction(req, "ADMIN_SELECTED_SELLERS_EMAIL_SENT", "User", undefined, {
+            requestedCount,
+            eligibleCount,
+            sentCount,
+            failedCount,
+            skippedNonSellerCount,
+            selectedUserIds: uniqueUserIds,
+            eligibleSellerIds: eligibleSellers.map((seller) => seller.id),
+            missingSelectedIds: uniqueUserIds.filter((id) => !selectedUsers.some((user) => user.id === id)),
+            failedRecipientIds: failedRecipients,
+            subject: body.subject.trim(),
+        });
+        return res.json({
+            success: true,
+            data: {
+                requestedCount,
+                eligibleCount,
+                sentCount,
+                failedCount,
+                skippedNonSellerCount,
+            },
+            message: `Processed ${requestedCount} selected users: sent ${sentCount}, failed ${failedCount}, skipped ${skippedNonSellerCount}.`,
+        });
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to send email to selected sellers";
         return res.status(message.includes("Invalid") ? 400 : 500).json({ success: false, message });
     }
 });
