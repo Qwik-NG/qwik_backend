@@ -338,6 +338,130 @@ function buildWhereClause(input) {
         params,
     };
 }
+async function fetchRelatedAds(input) {
+    if (input.searchTokens.length === 0)
+        return [];
+    const params = [...input.baseParams];
+    const tokenMatchClauses = [];
+    const scoreClauses = [];
+    for (const token of input.searchTokens) {
+        params.push(`%${token}%`);
+        const tokenPlaceholder = `$${params.length}`;
+        const tokenMatch = `(
+      a."title" ILIKE ${tokenPlaceholder}
+      OR a."description" ILIKE ${tokenPlaceholder}
+      OR COALESCE(a."brand", '') ILIKE ${tokenPlaceholder}
+      OR COALESCE(a."model", '') ILIKE ${tokenPlaceholder}
+      OR COALESCE(a."condition", '') ILIKE ${tokenPlaceholder}
+      OR c."name" ILIKE ${tokenPlaceholder}
+    )`;
+        tokenMatchClauses.push(tokenMatch);
+        scoreClauses.push(`CASE WHEN ${tokenMatch} THEN 1 ELSE 0 END`);
+    }
+    params.push(input.minScore);
+    const minScorePlaceholder = `$${params.length}`;
+    params.push(Math.max(1, input.imagesLimit));
+    const imageLimitPlaceholder = `$${params.length}`;
+    params.push(input.pageSize);
+    const pageSizePlaceholder = `$${params.length}`;
+    params.push(input.offset);
+    const offsetPlaceholder = `$${params.length}`;
+    const scoreSql = scoreClauses.join(" + ");
+    const tokenAnySql = tokenMatchClauses.join(" OR ");
+    const relatedWhereSql = input.baseWhereSql
+        ? `${input.baseWhereSql} AND (${tokenAnySql})`
+        : `WHERE (${tokenAnySql})`;
+    return prisma_1.prisma.$queryRawUnsafe(`
+    SELECT
+      related."id",
+      related."title",
+      related."description",
+      related."price",
+      related."location",
+      related."locationState",
+      related."locationArea",
+      related."brand",
+      related."model",
+      related."condition",
+      related."status",
+      related."isPromoted",
+      related."createdAt",
+      related."category",
+      related."images",
+      related."user"
+    FROM (
+      SELECT
+        a."id",
+        a."title",
+        a."description",
+        a."price",
+        a."location",
+        a."locationState",
+        a."locationArea",
+        a."brand",
+        a."model",
+        a."condition",
+        a."status"::text AS "status",
+        a."isPromoted",
+        a."createdAt",
+        jsonb_build_object(
+          'id', c."id",
+          'name', c."name",
+          'slug', c."slug",
+          'parentId', c."parentId"
+        ) AS "category",
+        COALESCE(img."images", '[]'::jsonb) AS "images",
+        jsonb_build_object(
+          'id', u."id",
+          'fullName', u."fullName",
+          'location', u."location",
+          'locationState', u."locationState",
+          'locationArea', u."locationArea",
+          'role', u."role"::text,
+          'sellerVerified', CASE WHEN va."status" = 'APPROVED'::"VerificationStatus" THEN true ELSE false END,
+          'profile', jsonb_build_object(
+            'avatarUrl', up."avatarUrl",
+            'verified', CASE WHEN va."status" = 'APPROVED'::"VerificationStatus" THEN true ELSE false END,
+            'verificationStatus', CASE WHEN va."status" = 'APPROVED'::"VerificationStatus" THEN 'verified' ELSE 'pending' END
+          ),
+          'verificationApplications', CASE WHEN va."id" IS NULL THEN '[]'::jsonb ELSE jsonb_build_array(jsonb_build_object('id', va."id", 'status', va."status"::text, 'paymentStatus', va."paymentStatus"::text)) END
+        ) AS "user",
+        (${scoreSql})::int AS "relevanceScore"
+      FROM "Ad" a
+      JOIN "Category" c ON c."id" = a."categoryId"
+      JOIN "User" u ON u."id" = a."userId"
+      LEFT JOIN "UserProfile" up ON up."userId" = u."id"
+      LEFT JOIN LATERAL (
+        SELECT v."id", v."status", v."paymentStatus"
+        FROM "VerificationApplication" v
+        WHERE v."userId" = u."id"
+        ORDER BY v."createdAt" DESC
+        LIMIT 1
+      ) va ON true
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(
+          jsonb_agg(
+            jsonb_build_object('id', i."id", 'url', i."url", 'position', i."position")
+            ORDER BY i."position" ASC
+          ),
+          '[]'::jsonb
+        ) AS "images"
+        FROM (
+          SELECT i."id", i."url", i."position"
+          FROM "AdImage" i
+          WHERE i."adId" = a."id"
+          ORDER BY i."position" ASC
+          LIMIT ${imageLimitPlaceholder}
+        ) i
+      ) img ON true
+      ${relatedWhereSql}
+    ) related
+    WHERE related."relevanceScore" >= ${minScorePlaceholder}
+    ORDER BY related."relevanceScore" DESC, related."isPromoted" DESC, related."createdAt" DESC
+    LIMIT ${pageSizePlaceholder}
+    OFFSET ${offsetPlaceholder}
+    `, ...params);
+}
 const categoryAliases = {
     car: "vehicles",
     cars: "vehicles",
@@ -382,6 +506,23 @@ function getLocationSearchTerms(value) {
         return ["FCT Abuja", "Abuja"];
     return [location];
 }
+function tokenizeSearch(value) {
+    const normalized = value
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]+/g, " ")
+        .trim();
+    if (!normalized)
+        return [];
+    const unique = new Set();
+    for (const token of normalized.split(/\s+/)) {
+        if (token.length < 2)
+            continue;
+        unique.add(token);
+        if (unique.size >= 6)
+            break;
+    }
+    return [...unique];
+}
 async function getCategoryIds(input) {
     if (input.subcategory) {
         const subcategory = await prisma_1.prisma.category.findUnique({
@@ -409,6 +550,7 @@ async function buildAdsListPayload(query, perf) {
     const timed = (operation, run) => (perf ? timePrisma(perf, operation, run) : run());
     const { page, pageSize, minPrice, maxPrice, imagesLimit, sort } = query;
     const search = (query.q || query.search).trim();
+    const searchTokens = tokenizeSearch(search);
     const location = query.location.trim();
     const categoryId = query.categoryId.trim();
     const category = query.category.trim();
@@ -424,6 +566,7 @@ async function buildAdsListPayload(query, perf) {
     }));
     const { whereSql, params } = buildWhereClause({
         search,
+        searchTokens,
         locationTerms,
         categoryIds,
         minPrice,
@@ -508,27 +651,60 @@ async function buildAdsListPayload(query, perf) {
       LIMIT ${pageSizePlaceholder}
       OFFSET ${offsetPlaceholder}
       `, ...listParams));
-    let total;
-    if (includeTotal) {
-        const countCacheKey = JSON.stringify(params);
-        const cachedCount = getCachedValue(adsCountCache, countCacheKey);
-        if (cachedCount) {
-            total = cachedCount.value;
-            if (cachedCount.state === "stale") {
-                runStaleRefresh(adsCountRefreshInFlight, countCacheKey, `ads.count ${countCacheKey}`, async () => {
-                    const countRows = await prisma_1.prisma.$queryRawUnsafe(`SELECT COUNT(*)::bigint AS total FROM "Ad" a ${whereSql}`, ...params);
-                    const refreshedTotal = Number(countRows[0]?.total ?? 0);
-                    setCachedValue(adsCountCache, countCacheKey, refreshedTotal, ADS_LIST_CACHE_TTL_MS, ADS_COUNT_STALE_TTL_MS);
-                });
-            }
-        }
-        else {
-            const countRows = await timed("ads.count", () => prisma_1.prisma.$queryRawUnsafe(`SELECT COUNT(*)::bigint AS total FROM "Ad" a ${whereSql}`, ...params));
-            total = Number(countRows[0]?.total ?? 0);
-            setCachedValue(adsCountCache, countCacheKey, total, ADS_LIST_CACHE_TTL_MS, ADS_COUNT_STALE_TTL_MS);
+    let rows = ads;
+    let resultMode = "exact";
+    const exactMatches = ads.length;
+    if (search && ads.length === 0 && searchTokens.length > 0) {
+        const { whereSql: baseWhereSql, params: baseParams } = buildWhereClause({
+            search: "",
+            locationTerms,
+            categoryIds,
+            minPrice,
+            maxPrice,
+            condition,
+            brand,
+        });
+        const minScore = searchTokens.length >= 3 ? 2 : 1;
+        const relatedRows = await timed("ads.related", () => fetchRelatedAds({
+            baseWhereSql,
+            baseParams,
+            searchTokens,
+            imagesLimit: Math.max(1, imagesLimit ?? 1),
+            pageSize,
+            offset: (page - 1) * pageSize,
+            minScore,
+        }));
+        if (relatedRows.length > 0) {
+            rows = relatedRows;
+            resultMode = "related";
         }
     }
-    const normalizedAds = ads.map((row) => ({
+    let total;
+    if (includeTotal) {
+        if (resultMode === "related") {
+            total = rows.length;
+        }
+        else {
+            const countCacheKey = JSON.stringify(params);
+            const cachedCount = getCachedValue(adsCountCache, countCacheKey);
+            if (cachedCount) {
+                total = cachedCount.value;
+                if (cachedCount.state === "stale") {
+                    runStaleRefresh(adsCountRefreshInFlight, countCacheKey, `ads.count ${countCacheKey}`, async () => {
+                        const countRows = await prisma_1.prisma.$queryRawUnsafe(`SELECT COUNT(*)::bigint AS total FROM "Ad" a ${whereSql}`, ...params);
+                        const refreshedTotal = Number(countRows[0]?.total ?? 0);
+                        setCachedValue(adsCountCache, countCacheKey, refreshedTotal, ADS_LIST_CACHE_TTL_MS, ADS_COUNT_STALE_TTL_MS);
+                    });
+                }
+            }
+            else {
+                const countRows = await timed("ads.count", () => prisma_1.prisma.$queryRawUnsafe(`SELECT COUNT(*)::bigint AS total FROM "Ad" a ${whereSql}`, ...params));
+                total = Number(countRows[0]?.total ?? 0);
+                setCachedValue(adsCountCache, countCacheKey, total, ADS_LIST_CACHE_TTL_MS, ADS_COUNT_STALE_TTL_MS);
+            }
+        }
+    }
+    const normalizedAds = rows.map((row) => ({
         id: row.id,
         title: row.title,
         description: row.description,
@@ -549,7 +725,13 @@ async function buildAdsListPayload(query, perf) {
     return {
         success: true,
         data: normalizedAds,
-        meta: { page, pageSize, ...(total !== undefined ? { total } : {}) },
+        meta: {
+            page,
+            pageSize,
+            ...(total !== undefined ? { total } : {}),
+            resultMode,
+            ...(resultMode === "related" ? { relatedTo: search, exactMatches } : {}),
+        },
     };
 }
 async function buildAdDetailsPayload(id, perf) {
