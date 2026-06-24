@@ -1,11 +1,14 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
+const resend_1 = require("resend");
 const zod_1 = require("zod");
 const prisma_1 = require("../../lib/prisma");
 const auth_1 = require("../../middleware/auth");
 const validation_1 = require("../../utils/validation");
 const admin_cache_1 = require("../../lib/admin-cache");
+const env_1 = require("../../config/env");
+const resend = env_1.env.resendApiKey ? new resend_1.Resend(env_1.env.resendApiKey) : null;
 const router = (0, express_1.Router)();
 const ADMIN_ACCESS_CACHE_TTL_MS = 10000;
 const adminAccessCache = new Map();
@@ -884,6 +887,87 @@ router.get("/audit-log", async (req, res) => {
     }
     catch {
         res.status(500).json({ success: false, message: "Failed to fetch audit log" });
+    }
+});
+// ===== Communications: Phase 2A — Test Email Only =====
+const testEmailSchema = zod_1.z.object({
+    subject: zod_1.z.string().trim().min(1, "Subject is required").max(120, "Subject must be 120 characters or fewer"),
+    message: zod_1.z.string().trim().min(1, "Message is required").max(5000, "Message must be 5000 characters or fewer"),
+});
+router.post("/communications/test-email", async (req, res) => {
+    try {
+        const body = (0, validation_1.parseOrThrow)(testEmailSchema, req.body ?? {});
+        // Always resolve the admin's own email from the database — never accept a recipient in the request body
+        const admin = await prisma_1.prisma.user.findUnique({
+            where: { id: req.auth.userId },
+            select: { id: true, email: true, fullName: true },
+        });
+        if (!admin || !admin.email) {
+            return res.status(400).json({ success: false, message: "Admin email address could not be resolved." });
+        }
+        if (!resend) {
+            if (env_1.env.isProduction) {
+                return res.status(503).json({ success: false, message: "Email service is not configured. Set RESEND_API_KEY." });
+            }
+            console.warn("[admin/communications] Resend is not configured; test email was not sent.");
+            return res.json({
+                success: true,
+                data: { recipient: admin.email, sent: false, reason: "Email service not configured in dev" },
+                message: "Email skipped (Resend not configured in this environment).",
+            });
+        }
+        const safeMessage = body.message.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        const safeSubject = body.subject.trim();
+        const result = await resend.emails.send({
+            from: env_1.env.resendFromEmail,
+            to: admin.email,
+            subject: `[Test] ${safeSubject}`,
+            html: `
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f3f3f5;font-family:sans-serif">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f3f3f5;padding:32px 0">
+    <tr><td align="center">
+      <table width="100%" style="max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e8e8ea">
+        <tr><td style="background:#ff9715;padding:20px 28px">
+          <span style="font-size:26px;font-weight:400;color:#ffffff;letter-spacing:-0.5px">qwik</span>
+          <span style="display:block;font-size:11px;color:rgba(255,255,255,0.8);margin-top:2px">Admin Panel — Communications</span>
+        </td></tr>
+        <tr><td style="padding:28px">
+          <p style="margin:0 0 8px;font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#9a99a6">Subject</p>
+          <p style="margin:0 0 20px;font-size:18px;font-weight:600;color:#1f1f29">${safeSubject}</p>
+          <p style="margin:0 0 8px;font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#9a99a6">Message</p>
+          <div style="background:#f8f8fa;border-radius:8px;padding:16px;font-size:15px;line-height:1.6;color:#3a3743;white-space:pre-wrap">${safeMessage}</div>
+        </td></tr>
+        <tr><td style="padding:16px 28px 24px;border-top:1px solid #f0f0f2">
+          <p style="margin:0;font-size:12px;color:#9a99a6">⚠️ This is a <strong>test admin communication</strong> sent only to <strong>${admin.email}</strong>. No users received this email.</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`,
+            text: `[TEST ADMIN COMMUNICATION]\n\nSubject: ${safeSubject}\n\n${body.message}\n\n---\nThis is a test admin communication sent only to ${admin.email}. No users received this email.`,
+        });
+        if (result.error) {
+            console.error("[admin/communications] Resend error:", result.error);
+            return res.status(502).json({ success: false, message: result.error.message || "Failed to send test email" });
+        }
+        await auditAdminAction(req, "ADMIN_TEST_EMAIL_SENT", "AdminCommunication", undefined, {
+            subject: safeSubject,
+            recipient: admin.email,
+            messageId: result.data?.id ?? null,
+        });
+        res.json({
+            success: true,
+            data: { recipient: admin.email, sent: true, messageId: result.data?.id ?? null },
+            message: `Test email sent to ${admin.email}`,
+        });
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to send test email";
+        res.status(message.includes("Invalid") ? 400 : 500).json({ success: false, message });
     }
 });
 exports.default = router;
