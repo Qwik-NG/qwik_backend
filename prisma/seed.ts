@@ -28,6 +28,9 @@ async function main() {
       prisma.category.create({ data: { name: 'Beauty', slug: 'beauty' } }),
       prisma.category.create({ data: { name: 'Furniture & Appliances', slug: 'furniture-appliances' } }),
       prisma.category.create({ data: { name: 'Jobs', slug: 'jobs' } }),
+      prisma.category.create({ data: { name: 'Agriculture & Food', slug: 'agriculture' } }),
+      prisma.category.create({ data: { name: 'Sports & Leisure', slug: 'sports-leisure' } }),
+      prisma.category.create({ data: { name: 'Art', slug: 'art' } }),
     ]);
 
     const electronics = topCategories.find((category) => category.slug === 'electronics');
