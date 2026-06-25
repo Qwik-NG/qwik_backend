@@ -17,10 +17,25 @@ const cloudinaryEnabled = hasCloudinaryValue(process.env.CLOUDINARY_CLOUD_NAME, 
 const isProduction = process.env.NODE_ENV === "production";
 const frontendUrl = process.env.FRONTEND_URL?.trim() ?? "";
 const resendApiKey = process.env.RESEND_API_KEY?.trim() ?? "";
-const resendFromEmail = process.env.RESEND_FROM_EMAIL?.trim() ?? "Qwik <onboarding@resend.dev>";
-const resendFromEmailLooksConfigured = resendFromEmail.length > 0 &&
-    resendFromEmail.includes("@") &&
-    !resendFromEmail.includes("onboarding@resend.dev");
+const EMAIL_FROM_NAME = "Qwik.ng";
+const DEFAULT_RESEND_FROM_ADDRESS = "onboarding@resend.dev";
+function extractEmailAddress(value) {
+    const raw = value?.trim() ?? "";
+    if (!raw)
+        return DEFAULT_RESEND_FROM_ADDRESS;
+    const bracketMatch = raw.match(/<\s*([^>\s]+@[^>\s]+)\s*>/);
+    if (bracketMatch?.[1])
+        return bracketMatch[1].trim();
+    const plainMatch = raw.match(/([^\s<>"]+@[^\s<>"]+)/);
+    if (plainMatch?.[1])
+        return plainMatch[1].trim();
+    return DEFAULT_RESEND_FROM_ADDRESS;
+}
+const resendFromEmailAddress = extractEmailAddress(process.env.RESEND_FROM_EMAIL);
+const resendFromEmail = `${EMAIL_FROM_NAME} <${resendFromEmailAddress}>`;
+const resendFromEmailLooksConfigured = resendFromEmailAddress.length > 0 &&
+    resendFromEmailAddress.includes("@") &&
+    resendFromEmailAddress !== DEFAULT_RESEND_FROM_ADDRESS;
 const resendConfigured = resendApiKey.length > 0 && resendFromEmailLooksConfigured;
 if (isProduction) {
     if (!frontendUrl) {
@@ -34,7 +49,7 @@ if (isProduction) {
             ...(resendApiKey ? [] : ["RESEND_API_KEY"]),
             ...(resendFromEmailLooksConfigured ? [] : ["RESEND_FROM_EMAIL"]),
         ];
-        throw new Error(`Missing required Resend environment variables for production password reset email: ${missingResendVars.join(", ")}. Set RESEND_API_KEY and RESEND_FROM_EMAIL (for example, Qwik <no-reply@mail.qwik.ng>).`);
+        throw new Error(`Missing required Resend environment variables for production password reset email: ${missingResendVars.join(", ")}. Set RESEND_API_KEY and RESEND_FROM_EMAIL (for example, Qwik.ng <no-reply@mail.qwik.ng>).`);
     }
 }
 if (isProduction && !cloudinaryEnabled) {
