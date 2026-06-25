@@ -39,7 +39,7 @@ SOCKET_ORIGINS="http://localhost:5173,https://your-frontend.vercel.app"
 PUBLIC_URL="https://api.your-domain.com"
 BACKEND_URL="https://api.your-domain.com"
 RESEND_API_KEY=""
-RESEND_FROM_EMAIL="Qwik <no-reply@mail.qwik.ng>"
+RESEND_FROM_EMAIL="Qwik.ng <no-reply@mail.qwik.ng>"
 PORT=4000
 CLOUDINARY_CLOUD_NAME="your_cloud_name"
 CLOUDINARY_API_KEY="your_api_key"
@@ -64,7 +64,7 @@ CLOUDINARY_FOLDER="qwik/ads"
 2. Add all DNS records provided by Resend (SPF, DKIM, and any required return-path records) in your DNS provider.
 3. In Render, set:
    - `RESEND_API_KEY` to your live Resend API key
-   - `RESEND_FROM_EMAIL` to a verified sender, for example `Qwik <no-reply@mail.qwik.ng>`
+   - `RESEND_FROM_EMAIL` to a verified sender, for example `Qwik.ng <no-reply@mail.qwik.ng>`
    - `FRONTEND_URL=https://qwik.ng`
 4. Restart the backend service after saving env vars.
 5. Test end-to-end by requesting forgot password, opening the received link, and completing reset on `/create-password?token=...`.
