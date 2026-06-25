@@ -94,7 +94,14 @@ async function applyPaymentStatus(tx, input) {
         && updatedPayment.purpose === "AD_PROMOTION"
         && input.status === "PAID"
         && payment.status !== "PAID") {
-        await tx.ad.updateMany({ where: { id: updatedPayment.adId, isPromoted: false }, data: { isPromoted: true } });
+        const promotionPlan = updatedPayment.metadata?.plan;
+        const durationDays = promotionPlan && (0, paymentPricing_1.isPromotionPlan)(promotionPlan) ? (0, paymentPricing_1.getPromotionDurationDays)(promotionPlan) : 30;
+        const now = new Date();
+        const promotedUntil = new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);
+        await tx.ad.updateMany({
+            where: { id: updatedPayment.adId, isPromoted: false },
+            data: { isPromoted: true, promotedAt: now, promotedUntil },
+        });
     }
     return updatedPayment;
 }

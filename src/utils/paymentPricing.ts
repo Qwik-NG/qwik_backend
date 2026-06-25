@@ -18,3 +18,13 @@ export function isPromotionPlan(plan: string | undefined): plan is PromotionPlan
 export function getPromotionPaymentAmountKobo(plan: PromotionPlan) {
   return PROMOTION_PAYMENT_AMOUNTS_KOBO[plan];
 }
+
+export function getPromotionDurationDays(plan: PromotionPlan): number {
+  const durationMap: Record<PromotionPlan, number> = {
+    "top-1-month": 30,
+    "top-30-days": 30,
+    "premium-1-month": 30,
+    "premium-3-months": 90,
+  };
+  return durationMap[plan] || 30;
+}

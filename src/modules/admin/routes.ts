@@ -259,15 +259,30 @@ router.get("/ads", async (req: Request, res: Response) => {
     const query = parseOrThrow(adminAdsQuerySchema, req.query);
     const search = query.search?.toLowerCase();
 
-    const where: Prisma.AdWhereInput = {};
-    if (query.status) where.status = query.status;
-    if (search) {
-      where.OR = [
-        { title: { contains: search, mode: "insensitive" } },
-        { user: { is: { fullName: { contains: search, mode: "insensitive" } } } },
-        { category: { is: { name: { contains: search, mode: "insensitive" } } } },
-      ];
+    const params: unknown[] = [];
+    const whereClauses: string[] = [];
+
+    if (query.status) {
+      params.push(query.status);
+      whereClauses.push(`a."status" = $${params.length}`);
     }
+
+    if (search) {
+      params.push(`%${search}%`);
+      const titleParam = `$${params.length}`;
+      params.push(`%${search}%`);
+      const nameParam = `$${params.length}`;
+      params.push(`%${search}%`);
+      const catParam = `$${params.length}`;
+      whereClauses.push(`(a."title" ILIKE ${titleParam} OR u."fullName" ILIKE ${nameParam} OR c."name" ILIKE ${catParam})`);
+    }
+
+    const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
+
+    params.push(pageSize);
+    const pageSizeParam = `$${params.length}`;
+    params.push(skip);
+    const skipParam = `$${params.length}`;
 
     const cacheKey = getCacheKey("/admin/ads", {
       page,
@@ -280,29 +295,103 @@ router.get("/ads", async (req: Request, res: Response) => {
       return res.json({ success: true, data: cached.data, meta: cached.meta, _cached: true });
     }
 
-    const [ads, total] = await prisma.$transaction([
-      prisma.ad.findMany({
-        where,
-        include: {
-          user: {
-            select: { id: true, fullName: true, email: true, status: true },
-          },
-          category: true,
-          images: {
-            select: { id: true, url: true, position: true },
-            orderBy: { position: "asc" },
-            take: 1,
-          },
-          _count: {
-            select: { images: true, reviews: true, reports: true },
-          },
-        },
-        orderBy: { createdAt: "desc" },
-        skip,
-        take: pageSize,
-      }),
-      prisma.ad.count({ where }),
+    const [adsRows, countResult] = await prisma.$transaction([
+      prisma.$queryRawUnsafe<any[]>(
+        `
+        SELECT
+          a."id",
+          a."title",
+          a."description",
+          a."price",
+          a."location",
+          a."locationState",
+          a."locationArea",
+          a."status"::text,
+          a."isPromoted",
+          a."promotedAt",
+          a."promotedUntil",
+          a."createdAt",
+          jsonb_build_object(
+            'id', u."id",
+            'fullName', u."fullName",
+            'email', u."email",
+            'status', u."status"::text
+          ) AS "user",
+          jsonb_build_object(
+            'id', c."id",
+            'name', c."name",
+            'slug', c."slug"
+          ) AS "category",
+          COALESCE(img."images", '[]'::jsonb) AS "images",
+          c2."count" AS "imageCount",
+          r."count" AS "reviewCount",
+          rp."count" AS "reportCount"
+        FROM "Ad" a
+        JOIN "User" u ON u."id" = a."userId"
+        JOIN "Category" c ON c."id" = a."categoryId"
+        LEFT JOIN LATERAL (
+          SELECT COALESCE(
+            jsonb_agg(
+              jsonb_build_object('id', i."id", 'url', i."url", 'position', i."position")
+              ORDER BY i."position" ASC
+            ),
+            '[]'::jsonb
+          ) AS "images"
+          FROM (
+            SELECT i."id", i."url", i."position"
+            FROM "AdImage" i
+            WHERE i."adId" = a."id"
+            ORDER BY i."position" ASC
+            LIMIT 1
+          ) i
+        ) img ON true
+        LEFT JOIN LATERAL (
+          SELECT COUNT(*)::int AS "count"
+          FROM "AdImage"
+          WHERE "adId" = a."id"
+        ) c2 ON true
+        LEFT JOIN LATERAL (
+          SELECT COUNT(*)::int AS "count"
+          FROM "Review"
+          WHERE "adId" = a."id"
+        ) r ON true
+        LEFT JOIN LATERAL (
+          SELECT COUNT(*)::int AS "count"
+          FROM "Report"
+          WHERE "adId" = a."id"
+        ) rp ON true
+        ${whereClause}
+        ORDER BY
+          CASE WHEN a."isPromoted" = true AND (a."promotedUntil" IS NULL OR a."promotedUntil" > now()) THEN 0 ELSE 1 END,
+          a."createdAt" DESC,
+          a."id" ASC
+        LIMIT ${pageSizeParam}
+        OFFSET ${skipParam}
+        `,
+        ...params,
+      ),
+      prisma.$queryRawUnsafe<[{ count: number }]>(
+        `
+        SELECT COUNT(*)::int AS "count"
+        FROM "Ad" a
+        JOIN "User" u ON u."id" = a."userId"
+        JOIN "Category" c ON c."id" = a."categoryId"
+        ${whereClause}
+        `,
+        ...(whereClause ? params.slice(0, params.length - 2) : []),
+      ),
     ]);
+
+    const ads = adsRows.map((row) => ({
+      ...row,
+      _count: {
+        images: row.imageCount || 0,
+        reviews: row.reviewCount || 0,
+        reports: row.reportCount || 0,
+      },
+    }));
+
+    const total = countResult[0]?.count || 0;
 
     const cacheData = { data: ads, meta: { page, pageSize, total } };
     setCached(cacheKey, cacheData, CACHE_TTLS.ADS);

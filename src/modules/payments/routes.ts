@@ -4,7 +4,7 @@ import { env } from "../../config/env";
 import { createPaystackReference, initializePaystackTransaction, mapPaystackStatus, verifyPaystackSignature, verifyPaystackTransaction } from "../../lib/paystack";
 import { prisma } from "../../lib/prisma";
 import { requireAuth } from "../../middleware/auth";
-import { getPromotionPaymentAmountKobo, isPromotionPlan, VERIFICATION_PAYMENT_AMOUNT_KOBO } from "../../utils/paymentPricing";
+import { getPromotionDurationDays, getPromotionPaymentAmountKobo, isPromotionPlan, VERIFICATION_PAYMENT_AMOUNT_KOBO } from "../../utils/paymentPricing";
 import { parseOrThrow } from "../../utils/validation";
 
 const router = Router();
@@ -123,7 +123,14 @@ async function applyPaymentStatus(tx: Parameters<Parameters<typeof prisma.$trans
     && input.status === "PAID"
     && payment.status !== "PAID"
   ) {
-    await tx.ad.updateMany({ where: { id: updatedPayment.adId, isPromoted: false }, data: { isPromoted: true } });
+    const promotionPlan = (updatedPayment.metadata as { plan?: string } | null)?.plan;
+    const durationDays = promotionPlan && isPromotionPlan(promotionPlan) ? getPromotionDurationDays(promotionPlan) : 30;
+    const now = new Date();
+    const promotedUntil = new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);
+    await tx.ad.updateMany({
+      where: { id: updatedPayment.adId, isPromoted: false },
+      data: { isPromoted: true, promotedAt: now, promotedUntil },
+    });
   }
 
   return updatedPayment;

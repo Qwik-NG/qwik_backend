@@ -618,7 +618,7 @@ async function fetchRelatedAds(input: {
       ${relatedWhereSql}
     ) related
     WHERE related."relevanceScore" >= ${minScorePlaceholder}
-    ORDER BY related."relevanceScore" DESC, related."isPromoted" DESC, related."createdAt" DESC
+    ORDER BY CASE WHEN related."isPromoted" = true AND (related."promotedUntil" IS NULL OR related."promotedUntil" > now()) THEN 0 ELSE 1 END, related."relevanceScore" DESC, related."createdAt" DESC
     LIMIT ${pageSizePlaceholder}
     OFFSET ${offsetPlaceholder}
     `,
@@ -758,7 +758,9 @@ async function buildAdsListPayload(
     brand,
   });
 
+  const promotionRank = `CASE WHEN a."isPromoted" = true AND (a."promotedUntil" IS NULL OR a."promotedUntil" > now()) THEN 0 ELSE 1 END`;
   const sortSql = sort === "price-low" ? `a."price" ASC` : sort === "price-high" ? `a."price" DESC` : `a."createdAt" DESC`;
+  const orderBySql = `${promotionRank}, ${sortSql}, a."id" ASC`;
   const listParams = [...params];
   listParams.push(Math.max(1, imagesLimit ?? 1));
   const imageLimitPlaceholder = `$${listParams.length}`;
@@ -834,7 +836,7 @@ async function buildAdsListPayload(
         ) i
       ) img ON true
       ${whereSql}
-      ORDER BY ${sortSql}
+      ORDER BY ${orderBySql}
       LIMIT ${pageSizePlaceholder}
       OFFSET ${offsetPlaceholder}
       `,
