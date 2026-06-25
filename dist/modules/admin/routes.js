@@ -261,8 +261,15 @@ router.get("/ads", async (req, res) => {
         SELECT
           a."id",
           a."title",
+          a."description",
+          a."price",
+          a."location",
+          a."locationState",
+          a."locationArea",
           a."status"::text,
           a."isPromoted",
+          a."promotedAt",
+          a."promotedUntil",
           a."createdAt",
           jsonb_build_object(
             'id', u."id",
