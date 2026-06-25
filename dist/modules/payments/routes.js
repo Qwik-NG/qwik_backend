@@ -98,10 +98,21 @@ async function applyPaymentStatus(tx, input) {
         const durationDays = promotionPlan && (0, paymentPricing_1.isPromotionPlan)(promotionPlan) ? (0, paymentPricing_1.getPromotionDurationDays)(promotionPlan) : 30;
         const now = new Date();
         const promotedUntil = new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);
-        await tx.ad.updateMany({
-            where: { id: updatedPayment.adId, isPromoted: false },
-            data: { isPromoted: true, promotedAt: now, promotedUntil },
+        const ad = await tx.ad.findUnique({
+            where: { id: updatedPayment.adId },
+            select: { id: true, promotionPriority: true },
         });
+        if (ad) {
+            await tx.ad.update({
+                where: { id: ad.id },
+                data: {
+                    isPromoted: true,
+                    promotedAt: now,
+                    promotedUntil,
+                    promotionPriority: ad.promotionPriority > 0 ? ad.promotionPriority : 1,
+                },
+            });
+        }
     }
     return updatedPayment;
 }
