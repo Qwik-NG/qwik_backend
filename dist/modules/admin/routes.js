@@ -1084,13 +1084,43 @@ router.post("/communications/send-selected-sellers-email", async (req, res) => {
         const requestedCount = uniqueUserIds.length;
         const eligibleCount = eligibleSellers.length;
         const skippedNonSellerCount = requestedCount - eligibleCount;
+        // Create campaign record
+        const messageSnippet = body.message.length > 100 ? body.message.substring(0, 97) + "..." : body.message;
+        const campaign = await prisma_1.prisma.emailCampaign.create({
+            data: {
+                type: "SELECTED_SELLERS",
+                status: "DRAFT",
+                adminId: req.auth.userId,
+                subject: body.subject.trim(),
+                messageSnippet,
+                requestedCount,
+                eligibleCount,
+                sentCount: 0,
+                failedCount: 0,
+                skippedCount: skippedNonSellerCount,
+            },
+        });
         if (!resend) {
             if (env_1.env.isProduction) {
                 return res.status(503).json({ success: false, message: "Email service is not configured. Set RESEND_API_KEY." });
             }
+            // Log skipped recipients
+            await Promise.all(uniqueUserIds.map((id) => prisma_1.prisma.emailRecipientLog.create({
+                data: {
+                    campaignId: campaign.id,
+                    userId: id,
+                    status: "SKIPPED",
+                    error: "Email service not configured in dev",
+                },
+            })));
+            await prisma_1.prisma.emailCampaign.update({
+                where: { id: campaign.id },
+                data: { status: "FAILED", failedCount: uniqueUserIds.length, skippedCount: 0 },
+            });
             return res.json({
                 success: true,
                 data: {
+                    campaignId: campaign.id,
                     requestedCount,
                     eligibleCount,
                     sentCount: 0,
@@ -1105,10 +1135,20 @@ router.post("/communications/send-selected-sellers-email", async (req, res) => {
         let sentCount = 0;
         let failedCount = 0;
         const failedRecipients = [];
+        // Send to eligible sellers
         for (const seller of eligibleSellers) {
             if (!seller.email) {
                 failedCount += 1;
                 failedRecipients.push(seller.id);
+                await prisma_1.prisma.emailRecipientLog.create({
+                    data: {
+                        campaignId: campaign.id,
+                        userId: seller.id,
+                        email: null,
+                        status: "FAILED",
+                        error: "No email address on account",
+                    },
+                });
                 continue;
             }
             const result = await resend.emails.send({
@@ -1146,12 +1186,51 @@ router.post("/communications/send-selected-sellers-email", async (req, res) => {
             if (result.error) {
                 failedCount += 1;
                 failedRecipients.push(seller.id);
+                await prisma_1.prisma.emailRecipientLog.create({
+                    data: {
+                        campaignId: campaign.id,
+                        userId: seller.id,
+                        email: seller.email,
+                        status: "FAILED",
+                        error: result.error.message || "Unknown send error",
+                    },
+                });
             }
             else {
                 sentCount += 1;
+                await prisma_1.prisma.emailRecipientLog.create({
+                    data: {
+                        campaignId: campaign.id,
+                        userId: seller.id,
+                        email: seller.email,
+                        status: "SENT",
+                    },
+                });
             }
         }
+        // Log skipped non-sellers
+        const nonSellerIds = uniqueUserIds.filter((id) => !eligibleSellers.some((seller) => seller.id === id));
+        await Promise.all(nonSellerIds.map((id) => prisma_1.prisma.emailRecipientLog.create({
+            data: {
+                campaignId: campaign.id,
+                userId: id,
+                status: "SKIPPED",
+                error: "User is not an active seller",
+            },
+        })));
+        // Update campaign status
+        const finalStatus = sentCount > 0 && failedCount === 0 ? "SENT" : sentCount > 0 ? "PARTIAL" : "FAILED";
+        await prisma_1.prisma.emailCampaign.update({
+            where: { id: campaign.id },
+            data: {
+                status: finalStatus,
+                sentCount,
+                failedCount,
+                skippedCount: skippedNonSellerCount,
+            },
+        });
         await auditAdminAction(req, "ADMIN_SELECTED_SELLERS_EMAIL_SENT", "User", undefined, {
+            campaignId: campaign.id,
             requestedCount,
             eligibleCount,
             sentCount,
@@ -1166,6 +1245,7 @@ router.post("/communications/send-selected-sellers-email", async (req, res) => {
         return res.json({
             success: true,
             data: {
+                campaignId: campaign.id,
                 requestedCount,
                 eligibleCount,
                 sentCount,
@@ -1178,6 +1258,64 @@ router.post("/communications/send-selected-sellers-email", async (req, res) => {
     catch (error) {
         const message = error instanceof Error ? error.message : "Failed to send email to selected sellers";
         return res.status(message.includes("Invalid") ? 400 : 500).json({ success: false, message });
+    }
+});
+router.get("/communications/campaigns", async (req, res) => {
+    try {
+        const campaigns = await prisma_1.prisma.emailCampaign.findMany({
+            where: { adminId: req.auth.userId },
+            select: {
+                id: true,
+                type: true,
+                status: true,
+                subject: true,
+                requestedCount: true,
+                eligibleCount: true,
+                sentCount: true,
+                failedCount: true,
+                skippedCount: true,
+                createdAt: true,
+            },
+            orderBy: { createdAt: "desc" },
+            take: 50,
+        });
+        res.json({ success: true, data: campaigns });
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to fetch campaigns";
+        res.status(500).json({ success: false, message });
+    }
+});
+router.get("/communications/campaigns/:id", async (req, res) => {
+    try {
+        const campaign = await prisma_1.prisma.emailCampaign.findUnique({
+            where: { id: String(req.params.id) },
+            include: {
+                recipients: {
+                    select: {
+                        id: true,
+                        userId: true,
+                        email: true,
+                        status: true,
+                        error: true,
+                        createdAt: true,
+                    },
+                    orderBy: { createdAt: "desc" },
+                },
+            },
+        });
+        if (!campaign) {
+            return res.status(404).json({ success: false, message: "Campaign not found" });
+        }
+        // Verify admin owns this campaign
+        if (campaign.adminId !== req.auth.userId) {
+            return res.status(403).json({ success: false, message: "Not authorized to view this campaign" });
+        }
+        res.json({ success: true, data: campaign });
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to fetch campaign details";
+        res.status(500).json({ success: false, message });
     }
 });
 exports.default = router;

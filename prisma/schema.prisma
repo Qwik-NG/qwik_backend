@@ -56,6 +56,23 @@ enum PaymentStatus {
   CANCELLED
 }
 
+enum EmailCampaignType {
+  SELECTED_SELLERS
+}
+
+enum EmailCampaignStatus {
+  DRAFT
+  SENT
+  FAILED
+  PARTIAL
+}
+
+enum EmailRecipientStatus {
+  SENT
+  FAILED
+  SKIPPED
+}
+
 model User {
   id              String       @id @default(cuid())
   email           String       @unique
@@ -86,6 +103,8 @@ model User {
   messagesSent    Message[]
   notifications   Notification[]
   notificationSettings NotificationSettings?
+  adminEmailCampaigns EmailCampaign[] @relation("AdminEmailCampaigns")
+  emailRecipientLogs EmailRecipientLog[] @relation("EmailRecipientUser")
   verificationApplications VerificationApplication[] @relation("VerificationApplicant")
   reviewedVerifications VerificationApplication[] @relation("VerificationReviewer")
   payments        PaymentTransaction[]
@@ -356,6 +375,44 @@ model PaymentWebhookEvent {
   providerEventId String   @unique
   payload         Json?
   processedAt     DateTime @default(now())
+}
+
+model EmailCampaign {
+  id             String                  @id @default(cuid())
+  type           EmailCampaignType
+  status         EmailCampaignStatus     @default(DRAFT)
+  adminId        String
+  subject        String
+  messageSnippet String
+  requestedCount Int                     @default(0)
+  eligibleCount  Int                     @default(0)
+  sentCount      Int                     @default(0)
+  failedCount    Int                     @default(0)
+  skippedCount   Int                     @default(0)
+  createdAt      DateTime                @default(now())
+  updatedAt      DateTime                @updatedAt
+  admin          User                    @relation("AdminEmailCampaigns", fields: [adminId], references: [id], onDelete: Cascade)
+  recipients     EmailRecipientLog[]
+
+  @@index([adminId])
+  @@index([createdAt])
+  @@index([status])
+}
+
+model EmailRecipientLog {
+  id          String               @id @default(cuid())
+  campaignId  String
+  userId      String
+  email       String?
+  status      EmailRecipientStatus
+  error       String?
+  createdAt   DateTime             @default(now())
+  campaign    EmailCampaign        @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  user        User                 @relation("EmailRecipientUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId])
+  @@index([userId])
+  @@index([status])
 }
 
 model Notification {
