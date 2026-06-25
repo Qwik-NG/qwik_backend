@@ -416,6 +416,34 @@ function withSellerVerifiedAd<T extends { user?: unknown }>(ad: T): T & { user: 
   };
 }
 
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function toAbsoluteUrl(value: string, baseUrl: string) {
+  if (!value) return "";
+  if (/^https?:\/\//i.test(value)) return value;
+  if (value.startsWith("/")) return `${baseUrl}${value}`;
+  return `${baseUrl}/${value}`;
+}
+
+function formatPriceLabel(price: number) {
+  try {
+    return new Intl.NumberFormat("en-NG", {
+      style: "currency",
+      currency: "NGN",
+      maximumFractionDigits: 0,
+    }).format(price);
+  } catch {
+    return `NGN ${price.toLocaleString("en-NG")}`;
+  }
+}
+
 function buildWhereClause(input: {
   search: string;
   searchTokens?: string[];
@@ -1187,6 +1215,75 @@ router.get("/:id", async (req, res, next) => {
       return res.status(404).json({ success: false, message: "Ad not found" });
     setCachedValue(adDetailsCache, id, payload, AD_DETAILS_CACHE_TTL_MS, AD_DETAILS_STALE_TTL_MS);
     return sendTimedJson(perf, res, payload, 200, ADS_CACHE_CONTROL_HEADER);
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.get("/:id/share-preview", async (req, res, next) => {
+  try {
+    const id = String(req.params.id);
+    const payload = await buildAdDetailsPayload(id);
+    if (!payload) {
+      return res.status(404).send("Not found");
+    }
+
+    const ad = payload.data as {
+      id: string;
+      title?: string;
+      description?: string;
+      price?: number;
+      category?: unknown;
+      images?: unknown;
+    };
+
+    const title = ad.title?.trim() || "Qwik Product";
+    const descriptionBase = ad.description?.trim() || "Browse this listing on Qwik.";
+    const description = descriptionBase.length > 200 ? `${descriptionBase.slice(0, 197)}...` : descriptionBase;
+    const category = toJsonObject(ad.category) as { name?: string };
+    const imageList = asArray(ad.images) as Array<{ url?: string }>;
+    const firstImage = imageList.find((image) => typeof image?.url === "string" && image.url.trim().length > 0)?.url?.trim() || "";
+
+    const requestBaseUrl = `${req.protocol}://${req.get("host")}`.replace(/\/$/, "");
+    const imageUrl = firstImage ? toAbsoluteUrl(firstImage, requestBaseUrl) : "";
+    const frontBase = env.frontendUrl.replace(/\/$/, "");
+    const appUrl = `${frontBase}/product-details/${encodeURIComponent(ad.id)}`;
+    const shareTitle = escapeHtml(title);
+    const shareDescription = escapeHtml(
+      `${typeof ad.price === "number" ? `${formatPriceLabel(ad.price)} · ` : ""}${category.name ? `${category.name} · ` : ""}${description}`,
+    );
+    const escapedImageUrl = escapeHtml(imageUrl);
+    const escapedAppUrl = escapeHtml(appUrl);
+
+    const html = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${shareTitle} | Qwik.ng</title>
+  <meta name="description" content="${shareDescription}" />
+  <meta property="og:site_name" content="Qwik.ng" />
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="${shareTitle}" />
+  <meta property="og:description" content="${shareDescription}" />
+  <meta property="og:url" content="${escapedAppUrl}" />
+  ${imageUrl ? `<meta property="og:image" content="${escapedImageUrl}" />` : ""}
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="${shareTitle}" />
+  <meta name="twitter:description" content="${shareDescription}" />
+  ${imageUrl ? `<meta name="twitter:image" content="${escapedImageUrl}" />` : ""}
+  <link rel="canonical" href="${escapedAppUrl}" />
+  <meta http-equiv="refresh" content="0;url=${escapedAppUrl}" />
+</head>
+<body>
+  <p>Redirecting to <a href="${escapedAppUrl}">the product page</a>...</p>
+  <script>window.location.replace(${JSON.stringify(appUrl)});</script>
+</body>
+</html>`;
+
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.setHeader("Cache-Control", "public, max-age=60, stale-while-revalidate=120");
+    return res.status(200).send(html);
   } catch (e) {
     next(e);
   }
