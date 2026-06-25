@@ -178,6 +178,8 @@ model Ad {
   specifications  Json?
   status          AdStatus  @default(ACTIVE)
   isPromoted      Boolean   @default(false)
+  promotedAt      DateTime?
+  promotedUntil   DateTime?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
   user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
