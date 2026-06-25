@@ -119,6 +119,8 @@ router.get("/me/ads", requireAuth, async (req, res, next) => {
       include: adInclude,
       orderBy: [
         { isPromoted: "desc" },
+        { promotionPriority: "desc" },
+        { promotedAt: "desc" },
         { createdAt: "desc" },
       ],
     });
@@ -252,7 +254,7 @@ router.get("/:id", async (req, res, next) => {
       prisma.ad.findMany({
         where: { userId: user.id, status: "ACTIVE" },
         include: publicAdInclude,
-        orderBy: [{ isPromoted: "desc" }, { createdAt: "desc" }],
+        orderBy: [{ isPromoted: "desc" }, { promotionPriority: "desc" }, { promotedAt: "desc" }, { createdAt: "desc" }],
       }),
       viewerId
         ? prisma.follow.findUnique({ where: { followerId_followingId: { followerId: viewerId, followingId: user.id } }, select: { id: true } })

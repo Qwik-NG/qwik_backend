@@ -385,6 +385,9 @@ async function fetchRelatedAds(input) {
       related."condition",
       related."status",
       related."isPromoted",
+      related."promotedAt",
+      related."promotedUntil",
+      related."promotionPriority",
       related."createdAt",
       related."category",
       related."images",
@@ -403,6 +406,9 @@ async function fetchRelatedAds(input) {
         a."condition",
         a."status"::text AS "status",
         a."isPromoted",
+        a."promotedAt",
+        a."promotedUntil",
+        a."promotionPriority",
         a."createdAt",
         jsonb_build_object(
           'id', c."id",
@@ -457,7 +463,12 @@ async function fetchRelatedAds(input) {
       ${relatedWhereSql}
     ) related
     WHERE related."relevanceScore" >= ${minScorePlaceholder}
-    ORDER BY CASE WHEN related."isPromoted" = true AND (related."promotedUntil" IS NULL OR related."promotedUntil" > now()) THEN 0 ELSE 1 END, related."relevanceScore" DESC, related."createdAt" DESC
+    ORDER BY
+      CASE WHEN related."isPromoted" = true AND (related."promotedUntil" IS NULL OR related."promotedUntil" > now()) THEN 0 ELSE 1 END,
+      CASE WHEN related."isPromoted" = true AND (related."promotedUntil" IS NULL OR related."promotedUntil" > now()) THEN related."promotionPriority" ELSE 0 END DESC,
+      CASE WHEN related."isPromoted" = true AND (related."promotedUntil" IS NULL OR related."promotedUntil" > now()) THEN related."promotedAt" ELSE NULL END DESC,
+      related."relevanceScore" DESC,
+      related."createdAt" DESC
     LIMIT ${pageSizePlaceholder}
     OFFSET ${offsetPlaceholder}
     `, ...params);
@@ -574,9 +585,10 @@ async function buildAdsListPayload(query, perf) {
         condition,
         brand,
     });
-    const promotionRank = `CASE WHEN a."isPromoted" = true AND (a."promotedUntil" IS NULL OR a."promotedUntil" > now()) THEN 0 ELSE 1 END`;
+    const activePromotionCondition = `a."isPromoted" = true AND (a."promotedUntil" IS NULL OR a."promotedUntil" > now())`;
+    const promotionRank = `CASE WHEN ${activePromotionCondition} THEN 0 ELSE 1 END`;
     const sortSql = sort === "price-low" ? `a."price" ASC` : sort === "price-high" ? `a."price" DESC` : `a."createdAt" DESC`;
-    const orderBySql = `${promotionRank}, ${sortSql}, a."id" ASC`;
+    const orderBySql = `${promotionRank}, CASE WHEN ${activePromotionCondition} THEN a."promotionPriority" ELSE 0 END DESC, CASE WHEN ${activePromotionCondition} THEN a."promotedAt" ELSE NULL END DESC, ${sortSql}, a."id" ASC`;
     const listParams = [...params];
     listParams.push(Math.max(1, imagesLimit ?? 1));
     const imageLimitPlaceholder = `$${listParams.length}`;
@@ -598,6 +610,9 @@ async function buildAdsListPayload(query, perf) {
         a."condition",
         a."status"::text AS "status",
         a."isPromoted",
+        a."promotedAt",
+        a."promotedUntil",
+        a."promotionPriority",
         a."createdAt",
         jsonb_build_object(
           'id', c."id",
@@ -719,6 +734,9 @@ async function buildAdsListPayload(query, perf) {
         condition: row.condition,
         status: row.status,
         isPromoted: row.isPromoted,
+        promotedAt: row.promotedAt,
+        promotedUntil: row.promotedUntil,
+        promotionPriority: row.promotionPriority,
         createdAt: row.createdAt,
         category: toJsonObject(row.category),
         images: asArray(row.images),

@@ -35,6 +35,13 @@ const adModerationSchema = zod_1.z.object({
 const adDeleteSchema = zod_1.z.object({
     reason: zod_1.z.string().trim().min(3).max(500).optional(),
 });
+const adPromoteSchema = zod_1.z.object({
+    durationDays: zod_1.z.coerce.number().int().min(1).max(365).optional(),
+    priority: zod_1.z.coerce.number().int().min(1).max(100).optional(),
+});
+const adPromotionPrioritySchema = zod_1.z.object({
+    priority: zod_1.z.coerce.number().int().min(0).max(100),
+});
 const reviewModerationSchema = zod_1.z.object({
     reason: zod_1.z.string().trim().min(3).max(500),
 });
@@ -270,6 +277,7 @@ router.get("/ads", async (req, res) => {
           a."isPromoted",
           a."promotedAt",
           a."promotedUntil",
+          a."promotionPriority",
           a."createdAt",
           jsonb_build_object(
             'id', u."id",
@@ -323,6 +331,8 @@ router.get("/ads", async (req, res) => {
         ${whereClause}
         ORDER BY
           CASE WHEN a."isPromoted" = true AND (a."promotedUntil" IS NULL OR a."promotedUntil" > now()) THEN 0 ELSE 1 END,
+          CASE WHEN a."isPromoted" = true AND (a."promotedUntil" IS NULL OR a."promotedUntil" > now()) THEN a."promotionPriority" ELSE 0 END DESC,
+          CASE WHEN a."isPromoted" = true AND (a."promotedUntil" IS NULL OR a."promotedUntil" > now()) THEN a."promotedAt" ELSE NULL END DESC,
           a."createdAt" DESC,
           a."id" ASC
         LIMIT ${pageSizeParam}
@@ -398,6 +408,149 @@ router.patch("/ads/:id/status", async (req, res) => {
     }
     catch (error) {
         const message = error instanceof Error ? error.message : "Failed to update ad status";
+        res.status(message.includes("Invalid") ? 400 : 500).json({ success: false, message });
+    }
+});
+router.patch("/ads/:id/promote", async (req, res) => {
+    try {
+        const id = String(req.params.id);
+        const body = (0, validation_1.parseOrThrow)(adPromoteSchema, req.body ?? {});
+        const existing = await prisma_1.prisma.ad.findUnique({
+            where: { id },
+            select: { id: true, title: true, userId: true, promotionPriority: true },
+        });
+        if (!existing)
+            return notFound(res, "Ad not found");
+        const now = new Date();
+        const durationDays = body.durationDays ?? 30;
+        const promotedUntil = new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);
+        const priority = body.priority ?? (existing.promotionPriority > 0 ? existing.promotionPriority : 1);
+        const ad = await prisma_1.prisma.ad.update({
+            where: { id },
+            data: {
+                isPromoted: true,
+                promotedAt: now,
+                promotedUntil,
+                promotionPriority: priority,
+            },
+            include: {
+                user: {
+                    select: { id: true, fullName: true, email: true, status: true },
+                },
+                category: true,
+                images: {
+                    select: { id: true, url: true, position: true },
+                    orderBy: { position: "asc" },
+                    take: 1,
+                },
+                _count: {
+                    select: { images: true, reviews: true, reports: true },
+                },
+            },
+        });
+        (0, admin_cache_1.invalidateCache)("/admin/ads", "/admin/reports", "/admin/stats", "/ads", "/categories", "/users");
+        await auditAdminAction(req, "AD_PROMOTED", "Ad", id, {
+            title: existing.title,
+            userId: existing.userId,
+            durationDays,
+            promotionPriority: priority,
+            promotedUntil,
+        });
+        res.json({ success: true, data: ad, message: "Ad promoted successfully" });
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to promote ad";
+        res.status(message.includes("Invalid") ? 400 : 500).json({ success: false, message });
+    }
+});
+router.patch("/ads/:id/unpromote", async (req, res) => {
+    try {
+        const id = String(req.params.id);
+        const existing = await prisma_1.prisma.ad.findUnique({
+            where: { id },
+            select: { id: true, title: true, userId: true, isPromoted: true, promotedUntil: true, promotionPriority: true },
+        });
+        if (!existing)
+            return notFound(res, "Ad not found");
+        const ad = await prisma_1.prisma.ad.update({
+            where: { id },
+            data: {
+                isPromoted: false,
+                promotedUntil: null,
+                promotionPriority: 0,
+            },
+            include: {
+                user: {
+                    select: { id: true, fullName: true, email: true, status: true },
+                },
+                category: true,
+                images: {
+                    select: { id: true, url: true, position: true },
+                    orderBy: { position: "asc" },
+                    take: 1,
+                },
+                _count: {
+                    select: { images: true, reviews: true, reports: true },
+                },
+            },
+        });
+        (0, admin_cache_1.invalidateCache)("/admin/ads", "/admin/reports", "/admin/stats", "/ads", "/categories", "/users");
+        await auditAdminAction(req, "AD_UNPROMOTED", "Ad", id, {
+            title: existing.title,
+            userId: existing.userId,
+            wasPromoted: existing.isPromoted,
+            previousPromotedUntil: existing.promotedUntil,
+            previousPromotionPriority: existing.promotionPriority,
+        });
+        res.json({ success: true, data: ad, message: "Ad unpromoted successfully" });
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to unpromote ad";
+        res.status(message.includes("Invalid") ? 400 : 500).json({ success: false, message });
+    }
+});
+router.patch("/ads/:id/promotion-priority", async (req, res) => {
+    try {
+        const id = String(req.params.id);
+        const body = (0, validation_1.parseOrThrow)(adPromotionPrioritySchema, req.body ?? {});
+        const existing = await prisma_1.prisma.ad.findUnique({
+            where: { id },
+            select: { id: true, title: true, userId: true, isPromoted: true, promotionPriority: true },
+        });
+        if (!existing)
+            return notFound(res, "Ad not found");
+        if (!existing.isPromoted) {
+            return res.status(400).json({ success: false, message: "Only promoted ads can have promotion priority updated" });
+        }
+        const ad = await prisma_1.prisma.ad.update({
+            where: { id },
+            data: { promotionPriority: body.priority },
+            include: {
+                user: {
+                    select: { id: true, fullName: true, email: true, status: true },
+                },
+                category: true,
+                images: {
+                    select: { id: true, url: true, position: true },
+                    orderBy: { position: "asc" },
+                    take: 1,
+                },
+                _count: {
+                    select: { images: true, reviews: true, reports: true },
+                },
+            },
+        });
+        (0, admin_cache_1.invalidateCache)("/admin/ads", "/admin/reports", "/admin/stats", "/ads", "/categories", "/users");
+        await auditAdminAction(req, "AD_PROMOTION_PRIORITY_UPDATED", "Ad", id, {
+            title: existing.title,
+            userId: existing.userId,
+            previousPriority: existing.promotionPriority,
+            priority: body.priority,
+        });
+        res.json({ success: true, data: ad, message: "Promotion priority updated" });
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to update promotion priority";
         res.status(message.includes("Invalid") ? 400 : 500).json({ success: false, message });
     }
 });
