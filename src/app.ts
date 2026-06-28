@@ -50,7 +50,7 @@ const corsOptions: cors.CorsOptions = {
     }
   },
   methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Auth-Context"],
   credentials: false,
   optionsSuccessStatus: 204,
 };
