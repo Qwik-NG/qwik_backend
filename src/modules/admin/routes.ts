@@ -7,6 +7,7 @@ import { requireAuth } from "../../middleware/auth";
 import { parseOrThrow } from "../../utils/validation";
 import { getCached, setCached, getCacheKey, invalidateCache, CACHE_TTLS } from "../../lib/admin-cache";
 import { env } from "../../config/env";
+import { fetchGa4TrafficMetrics } from "../../lib/ga4-reporting";
 
 const resend = env.resendApiKey ? new Resend(env.resendApiKey) : null;
 
@@ -220,6 +221,8 @@ router.get("/analytics", async (_req: Request, res: Response) => {
       return res.json({ success: true, data: cached, _cached: true });
     }
 
+    const trafficPromise = fetchGa4TrafficMetrics();
+
     const now = new Date();
     const startOfToday = new Date(now);
     startOfToday.setHours(0, 0, 0, 0);
@@ -302,6 +305,7 @@ router.get("/analytics", async (_req: Request, res: Response) => {
       : [];
 
     const categoryNameById = new Map(categories.map((category) => [category.id, category.name]));
+    const traffic = await trafficPromise;
 
     const data = {
       users: {
@@ -371,6 +375,7 @@ router.get("/analytics", async (_req: Request, res: Response) => {
           }))
           .sort((a, b) => b.count - a.count),
       },
+      ...(traffic ? { traffic } : {}),
       generatedAt: now.toISOString(),
     };
 

@@ -100,6 +100,9 @@ const frontendOriginSeed = process.env.FRONTEND_URL
   ? `${process.env.FRONTEND_URL},${defaultAllowedOrigins}`
   : defaultAllowedOrigins;
 
+const ga4TimeoutRaw = Number(process.env.GA4_TIMEOUT_MS ?? 4000);
+const ga4TimeoutMs = Number.isFinite(ga4TimeoutRaw) && ga4TimeoutRaw > 0 ? ga4TimeoutRaw : 4000;
+
 export const env = {
   nodeEnv: process.env.NODE_ENV ?? "development",
   isProduction,
@@ -125,4 +128,9 @@ export const env = {
   cloudinaryApiSecret: process.env.CLOUDINARY_API_SECRET ?? "",
   cloudinaryFolder: process.env.CLOUDINARY_FOLDER ?? "qwik/ads",
   googleClientId: process.env.GOOGLE_CLIENT_ID ?? "",
+  ga4PropertyId: process.env.GA4_PROPERTY_ID?.trim() ?? "",
+  ga4ReportingEnabled: (process.env.GA4_REPORTING_ENABLED ?? "false").toLowerCase() === "true",
+  ga4TimeoutMs,
+  googleServiceAccountJson: process.env.GOOGLE_SERVICE_ACCOUNT_JSON?.trim() ?? "",
+  googleApplicationCredentials: process.env.GOOGLE_APPLICATION_CREDENTIALS?.trim() ?? "",
 };
