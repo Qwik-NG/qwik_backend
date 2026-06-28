@@ -2,6 +2,7 @@
 import { Router } from "express";
 import bcrypt from "bcrypt";
 import crypto from "crypto";
+import { Prisma } from "@prisma/client";
 import { Resend } from "resend";
 import { z } from "zod";
 import { OAuth2Client } from "google-auth-library";
@@ -42,6 +43,57 @@ const authUserSelect = {
     take: 1,
   },
 };
+
+function getRequestIp(req: { ip?: string; socket?: { remoteAddress?: string | null }; headers: Record<string, unknown> }) {
+  const forwardedFor = req.headers["x-forwarded-for"];
+  if (typeof forwardedFor === "string") {
+    return forwardedFor.split(",")[0]?.trim() || req.ip || req.socket?.remoteAddress || "unknown";
+  }
+  if (Array.isArray(forwardedFor) && typeof forwardedFor[0] === "string") {
+    return forwardedFor[0].split(",")[0]?.trim() || req.ip || req.socket?.remoteAddress || "unknown";
+  }
+  return req.ip || req.socket?.remoteAddress || "unknown";
+}
+
+function getRequestUserAgent(req: { headers: Record<string, unknown> }) {
+  const userAgent = req.headers["user-agent"];
+  if (typeof userAgent === "string") return userAgent;
+  if (Array.isArray(userAgent) && typeof userAgent[0] === "string") return userAgent[0];
+  return "unknown";
+}
+
+let cachedFallbackAdminId: string | null | undefined;
+
+async function getFallbackAdminId() {
+  if (cachedFallbackAdminId !== undefined) return cachedFallbackAdminId;
+  const admin = await prisma.user.findFirst({ where: { role: "ADMIN" }, select: { id: true } });
+  cachedFallbackAdminId = admin?.id ?? null;
+  return cachedFallbackAdminId;
+}
+
+async function createAdminAuthAuditEntry(input: {
+  adminId?: string | null;
+  action: "ADMIN_LOGIN_SUCCESS" | "ADMIN_LOGIN_FAILED" | "ADMIN_LOGOUT";
+  targetId?: string | null;
+  metadata: Prisma.InputJsonValue;
+}) {
+  try {
+    const adminId = input.adminId ?? (await getFallbackAdminId());
+    if (!adminId) return;
+
+    await prisma.adminAuditLog.create({
+      data: {
+        adminId,
+        action: input.action,
+        targetType: "AUTH",
+        targetId: input.targetId ?? null,
+        metadata: input.metadata,
+      },
+    });
+  } catch (error) {
+    console.error("Failed to write admin auth audit entry", error);
+  }
+}
 
 function resetPasswordUrl(token: string) {
   const frontendOrigin = env.frontendUrl.split(",")[0]?.trim().replace(/\/$/, "") || "http://localhost:5173";
@@ -179,18 +231,109 @@ router.post("/register", async (req, res, next) => {
 router.post("/login", async (req, res, next) => {
   try {
     const b = parseOrThrow(z.object({ email: z.string().email(), password: z.string().min(6) }), req.body);
+    const normalizedEmail = b.email.toLowerCase();
+    const authContext = String(req.headers["x-auth-context"] ?? "").trim().toLowerCase();
+    const isAdminContext = authContext === "admin";
+    const requestIp = getRequestIp(req);
+    const userAgent = getRequestUserAgent(req);
+
     const user = await prisma.user.findUnique({
-      where: { email: b.email.toLowerCase() },
+      where: { email: normalizedEmail },
       select: { ...authUserSelect, passwordHash: true },
     });
-    if (!user || typeof user.passwordHash !== "string" || !user.passwordHash || !(await bcrypt.compare(b.password, user.passwordHash))) {
+
+    const hasPasswordHash = typeof user?.passwordHash === "string" && user.passwordHash.length > 0;
+    const passwordMatches = hasPasswordHash ? await bcrypt.compare(b.password, user.passwordHash as string) : false;
+    const isAdminUser = user?.role === "ADMIN";
+    const shouldAuditAsAdmin = isAdminContext || isAdminUser;
+
+    if (!user || !hasPasswordHash || !passwordMatches) {
+      if (shouldAuditAsAdmin) {
+        await createAdminAuthAuditEntry({
+          adminId: isAdminUser ? user?.id : undefined,
+          action: "ADMIN_LOGIN_FAILED",
+          targetId: null,
+          metadata: {
+            attemptedEmail: normalizedEmail,
+            reason: !user ? "INVALID_CREDENTIALS" : !hasPasswordHash ? "INVALID_CREDENTIALS" : "INVALID_CREDENTIALS",
+            ipAddress: requestIp,
+            userAgent,
+            authContext: isAdminContext ? "admin" : "standard",
+            timestamp: new Date().toISOString(),
+          },
+        });
+      }
       return res.status(401).json({ success: false, message: "Invalid credentials" });
     }
-    if (user.status === "BANNED") return res.status(403).json({ success: false, message: "This account has been suspended" });
+
+    if (user.status === "BANNED") {
+      if (shouldAuditAsAdmin) {
+        await createAdminAuthAuditEntry({
+          adminId: isAdminUser ? user.id : undefined,
+          action: "ADMIN_LOGIN_FAILED",
+          targetId: null,
+          metadata: {
+            attemptedEmail: normalizedEmail,
+            reason: "ACCOUNT_SUSPENDED",
+            ipAddress: requestIp,
+            userAgent,
+            authContext: isAdminContext ? "admin" : "standard",
+            timestamp: new Date().toISOString(),
+          },
+        });
+      }
+      return res.status(403).json({ success: false, message: "This account has been suspended" });
+    }
+
     const token = signAuthToken({ userId: user.id, email: user.email, role: user.role });
+
+    if (isAdminUser) {
+      await createAdminAuthAuditEntry({
+        adminId: user.id,
+        action: "ADMIN_LOGIN_SUCCESS",
+        targetId: user.id,
+        metadata: {
+          email: user.email,
+          role: user.role,
+          ipAddress: requestIp,
+          userAgent,
+          timestamp: new Date().toISOString(),
+        },
+      });
+    }
+
     res.json({ success: true, data: { token, user: toAuthUser(user) } });
   } catch (e) { next(e); }
 });
+
+router.post("/logout", requireAuth, async (req, res, next) => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.auth!.userId },
+      select: { id: true, email: true, role: true },
+    });
+
+    if (user?.role === "ADMIN") {
+      await createAdminAuthAuditEntry({
+        adminId: user.id,
+        action: "ADMIN_LOGOUT",
+        targetId: user.id,
+        metadata: {
+          email: user.email,
+          role: user.role,
+          ipAddress: getRequestIp(req),
+          userAgent: getRequestUserAgent(req),
+          timestamp: new Date().toISOString(),
+        },
+      });
+    }
+
+    res.json({ success: true, message: "Logged out" });
+  } catch (e) {
+    next(e);
+  }
+});
+
 router.post("/forgot-password", async (req, res, next) => {
   try {
     if (env.isProduction && !env.resendConfigured) {
