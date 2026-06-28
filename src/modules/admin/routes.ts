@@ -212,6 +212,176 @@ router.get("/stats", async (_req: Request, res: Response) => {
   }
 });
 
+router.get("/analytics", async (_req: Request, res: Response) => {
+  try {
+    const cacheKey = getCacheKey("/admin/analytics");
+    const cached = getCached(cacheKey);
+    if (cached) {
+      return res.json({ success: true, data: cached, _cached: true });
+    }
+
+    const now = new Date();
+    const startOfToday = new Date(now);
+    startOfToday.setHours(0, 0, 0, 0);
+
+    const startOfLast7Days = new Date(startOfToday);
+    startOfLast7Days.setDate(startOfLast7Days.getDate() - 6);
+
+    const [
+      totalUsers,
+      newUsersToday,
+      newUsersLast7Days,
+      totalAds,
+      activeAds,
+      promotedAds,
+      activePromotedAds,
+      newAdsToday,
+      newAdsLast7Days,
+      totalConversations,
+      totalMessages,
+      reportsCount,
+      pendingReports,
+      reviewsCount,
+      totalNotifications,
+      unreadNotifications,
+      paymentsByStatusRows,
+      paymentsByPurposeRows,
+      adsByCategoryRows,
+      adsByLocationStateRows,
+      usersByLocationStateRows,
+      notificationsByTypeRows,
+    ] = await prisma.$transaction([
+      prisma.user.count(),
+      prisma.user.count({ where: { createdAt: { gte: startOfToday } } }),
+      prisma.user.count({ where: { createdAt: { gte: startOfLast7Days } } }),
+      prisma.ad.count(),
+      prisma.ad.count({ where: { status: "ACTIVE" } }),
+      prisma.ad.count({ where: { isPromoted: true } }),
+      prisma.ad.count({ where: { isPromoted: true, status: "ACTIVE" } }),
+      prisma.ad.count({ where: { createdAt: { gte: startOfToday } } }),
+      prisma.ad.count({ where: { createdAt: { gte: startOfLast7Days } } }),
+      prisma.conversation.count(),
+      prisma.message.count(),
+      prisma.report.count(),
+      prisma.report.count({ where: { status: "PENDING" } }),
+      prisma.review.count(),
+      prisma.notification.count(),
+      prisma.notification.count({ where: { read: false } }),
+      prisma.paymentTransaction.groupBy({
+        by: ["status"],
+        _count: { _all: true },
+      }),
+      prisma.paymentTransaction.groupBy({
+        by: ["purpose"],
+        _count: { _all: true },
+      }),
+      prisma.ad.groupBy({
+        by: ["categoryId"],
+        _count: { _all: true },
+      }),
+      prisma.ad.groupBy({
+        by: ["locationState"],
+        _count: { _all: true },
+      }),
+      prisma.user.groupBy({
+        by: ["locationState"],
+        _count: { _all: true },
+      }),
+      prisma.notification.groupBy({
+        by: ["type"],
+        _count: { _all: true },
+      }),
+    ]);
+
+    const categoryIds = adsByCategoryRows.map((entry) => entry.categoryId);
+    const categories = categoryIds.length
+      ? await prisma.category.findMany({
+          where: { id: { in: categoryIds } },
+          select: { id: true, name: true },
+        })
+      : [];
+
+    const categoryNameById = new Map(categories.map((category) => [category.id, category.name]));
+
+    const data = {
+      users: {
+        total: totalUsers,
+        newToday: newUsersToday,
+        newLast7Days: newUsersLast7Days,
+      },
+      ads: {
+        total: totalAds,
+        active: activeAds,
+        promoted: promotedAds,
+        activePromoted: activePromotedAds,
+        newToday: newAdsToday,
+        newLast7Days: newAdsLast7Days,
+      },
+      marketplace: {
+        totalConversations,
+        totalMessages,
+      },
+      moderation: {
+        reportsCount,
+        pendingReports,
+        reviewsCount,
+      },
+      notifications: {
+        total: totalNotifications,
+        unread: unreadNotifications,
+        byType: notificationsByTypeRows
+          .map((entry) => ({
+            type: entry.type,
+            count: entry._count._all,
+          }))
+          .sort((a, b) => b.count - a.count),
+      },
+      payments: {
+        byStatus: paymentsByStatusRows
+          .map((entry) => ({
+            status: entry.status,
+            count: entry._count._all,
+          }))
+          .sort((a, b) => b.count - a.count),
+        byPurpose: paymentsByPurposeRows
+          .map((entry) => ({
+            purpose: entry.purpose,
+            count: entry._count._all,
+          }))
+          .sort((a, b) => b.count - a.count),
+      },
+      distribution: {
+        adsByCategory: adsByCategoryRows
+          .map((entry) => ({
+            categoryId: entry.categoryId,
+            categoryName: categoryNameById.get(entry.categoryId) ?? "Unknown",
+            count: entry._count._all,
+          }))
+          .sort((a, b) => b.count - a.count),
+        adsByLocationState: adsByLocationStateRows
+          .map((entry) => ({
+            locationState: entry.locationState ?? "UNKNOWN",
+            count: entry._count._all,
+          }))
+          .sort((a, b) => b.count - a.count),
+        usersByLocationState: usersByLocationStateRows
+          .map((entry) => ({
+            locationState: entry.locationState ?? "UNKNOWN",
+            count: entry._count._all,
+          }))
+          .sort((a, b) => b.count - a.count),
+      },
+      generatedAt: now.toISOString(),
+    };
+
+    setCached(cacheKey, data, CACHE_TTLS.STATS);
+
+    res.json({ success: true, data });
+  } catch {
+    res.status(500).json({ success: false, message: "Failed to fetch admin analytics" });
+  }
+});
+
 router.get("/users", async (req: Request, res: Response) => {
   try {
     const { page, pageSize, skip } = getPage(req);
