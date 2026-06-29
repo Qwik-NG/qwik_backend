@@ -5,6 +5,7 @@ import { z } from "zod";
 import { prisma } from "../../lib/prisma";
 import { emitNotificationNew } from "../../lib/realtime";
 import { env } from "../../config/env";
+import { clearSitemapCache } from "../seo/routes";
 import { parseOrThrow, createImageUrlSchema } from "../../utils/validation";
 import { requireActiveUser, requireAuth, requireVerifiedEmail } from "../../middleware/auth";
 import { getPromotionPaymentAmountKobo, PROMOTION_PLAN_VALUES } from "../../utils/paymentPricing";
@@ -1341,6 +1342,7 @@ router.post("/", requireAuth, requireActiveUser, requireVerifiedEmail, async (re
     });
 
     clearAdCaches(ad.id);
+    clearSitemapCache();
 
     void createSellerNewAdNotifications({
       sellerId: req.auth!.userId,
@@ -1461,6 +1463,7 @@ router.patch("/:id", requireAuth, requireActiveUser, async (req, res, next) => {
       data: withSellerVerifiedAd(updatedAd),
     });
     clearAdCaches(id);
+    clearSitemapCache();
   } catch (e) {
     next(e);
   }
@@ -1476,6 +1479,7 @@ router.delete("/:id", requireAuth, requireActiveUser, async (req, res, next) => 
       return res.status(403).json({ success: false, message: "Forbidden" });
     await prisma.ad.delete({ where: { id } });
     clearAdCaches(id);
+    clearSitemapCache();
     res.json({ success: true, data: null, message: "Ad deleted" });
   } catch (e) {
     next(e);
@@ -1677,6 +1681,7 @@ router.patch("/:id/mark-unavailable", requireAuth, async (req, res, next) => {
       select: adDetailSelect,
     });
     clearAdCaches(id);
+    clearSitemapCache();
     res.json({ success: true, message: "Ad marked unavailable", data: withSellerVerifiedAd(updated) });
   } catch (e) {
     next(e);
