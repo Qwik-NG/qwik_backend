@@ -52,9 +52,16 @@ const followingSellerSelect = {
   fullName: true,
   location: true,
   profile: true,
+  verificationApplications: {
+    orderBy: { createdAt: "desc" as const },
+    take: 1,
+    select: { id: true, status: true, paymentStatus: true },
+  },
   _count: {
     select: {
+      ads: true,
       followers: true,
+      following: true,
     },
   },
 };
@@ -235,7 +242,53 @@ router.get("/me/following", requireAuth, async (req, res, next) => {
         fullName: item.following.fullName,
         location: item.following.location,
         profile: item.following.profile,
+        verification: item.following.verificationApplications[0]
+          ? {
+              id: item.following.verificationApplications[0].id,
+              status: item.following.verificationApplications[0].status,
+              paymentStatus: item.following.verificationApplications[0].paymentStatus,
+              approved: item.following.verificationApplications[0].status === "APPROVED",
+            }
+          : null,
+        stats: {
+          adverts: item.following._count.ads,
+          followers: item.following._count.followers,
+          following: item.following._count.following,
+        },
         followersCount: item.following._count.followers,
+        followedAt: item.createdAt,
+      })),
+    });
+  } catch (e) { next(e); }
+});
+router.get("/me/followers", requireAuth, async (req, res, next) => {
+  try {
+    const followers = await prisma.follow.findMany({
+      where: { followingId: req.auth!.userId },
+      include: { follower: { select: followingSellerSelect } },
+      orderBy: { createdAt: "desc" },
+    });
+
+    res.json({
+      success: true,
+      data: followers.map((item) => ({
+        id: item.follower.id,
+        fullName: item.follower.fullName,
+        location: item.follower.location,
+        profile: item.follower.profile,
+        verification: item.follower.verificationApplications[0]
+          ? {
+              id: item.follower.verificationApplications[0].id,
+              status: item.follower.verificationApplications[0].status,
+              paymentStatus: item.follower.verificationApplications[0].paymentStatus,
+              approved: item.follower.verificationApplications[0].status === "APPROVED",
+            }
+          : null,
+        stats: {
+          adverts: item.follower._count.ads,
+          followers: item.follower._count.followers,
+          following: item.follower._count.following,
+        },
         followedAt: item.createdAt,
       })),
     });
