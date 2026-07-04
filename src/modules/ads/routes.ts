@@ -8,6 +8,7 @@ import { env } from "../../config/env";
 import { clearSitemapCache } from "../seo/routes";
 import { parseOrThrow, createImageUrlSchema } from "../../utils/validation";
 import { requireActiveUser, requireAuth, requireVerifiedEmail } from "../../middleware/auth";
+import { requireCompleteProfile } from "../../middleware/requireCompleteProfile";
 import { getPromotionPaymentAmountKobo, PROMOTION_PLAN_VALUES } from "../../utils/paymentPricing";
 import { createSellerNewAdNotifications } from "../../utils/notifications";
 import { deriveViewerFingerprint, recordAdMetricEvent } from "../../lib/adMetricTelemetry";
@@ -1290,7 +1291,7 @@ router.get("/:id/share-preview", async (req, res, next) => {
     next(e);
   }
 });
-router.post("/", requireAuth, requireActiveUser, requireVerifiedEmail, async (req, res, next) => {
+router.post("/", requireAuth, requireActiveUser, requireVerifiedEmail, requireCompleteProfile, async (req, res, next) => {
   try {
     const b = parseOrThrow(
       z.object({
