@@ -73,6 +73,28 @@ enum EmailRecipientStatus {
   SKIPPED
 }
 
+enum EngagementEventType {
+  NEW_MESSAGE
+  NEW_OFFER
+  AD_PERFORMANCE_REPORT
+}
+
+enum EmailOutboxStatus {
+  PENDING
+  PROCESSING
+  RETRY
+  SENT
+  FAILED
+  CANCELLED
+}
+
+enum EmailDeliveryAttemptStatus {
+  SENT
+  FAILED
+  SKIPPED
+  DRY_RUN
+}
+
 model User {
   id              String       @id @default(cuid())
   email           String       @unique
@@ -105,6 +127,8 @@ model User {
   notificationSettings NotificationSettings?
   adminEmailCampaigns EmailCampaign[] @relation("AdminEmailCampaigns")
   emailRecipientLogs EmailRecipientLog[] @relation("EmailRecipientUser")
+  emailOutboxJobs EmailOutboxJob[] @relation("EmailOutboxRecipient")
+  notificationEventFingerprints NotificationEventFingerprint[] @relation("NotificationEventRecipient")
   verificationApplications VerificationApplication[] @relation("VerificationApplicant")
   reviewedVerifications VerificationApplication[] @relation("VerificationReviewer")
   payments        PaymentTransaction[]
@@ -416,6 +440,72 @@ model EmailRecipientLog {
   @@index([campaignId])
   @@index([userId])
   @@index([status])
+}
+
+model NotificationEventFingerprint {
+  id          String              @id @default(cuid())
+  fingerprint String              @unique
+  eventType   EngagementEventType
+  recipientId String
+  payload     Json?
+  createdAt   DateTime            @default(now())
+  recipient   User                @relation("NotificationEventRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+  emailOutboxJobs EmailOutboxJob[]
+
+  @@index([recipientId])
+  @@index([eventType])
+  @@index([createdAt])
+}
+
+model EmailOutboxJob {
+  id                      String                         @id @default(cuid())
+  eventType               EngagementEventType
+  status                  EmailOutboxStatus             @default(PENDING)
+  recipientId             String
+  recipientEmail          String
+  subject                 String
+  htmlBody                String?
+  textBody                String?
+  actionUrl               String?
+  payload                 Json?
+  fingerprint             String                         @unique
+  notificationEventFingerprintId String?
+  availableAt             DateTime                       @default(now())
+  nextAttemptAt           DateTime?
+  lockedAt                DateTime?
+  lockedBy                String?
+  attemptCount            Int                            @default(0)
+  maxAttempts             Int                            @default(5)
+  lastError               String?
+  providerMessageId       String?
+  sentAt                  DateTime?
+  createdAt               DateTime                       @default(now())
+  updatedAt               DateTime                       @updatedAt
+  recipient               User                           @relation("EmailOutboxRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+  notificationEventFingerprint NotificationEventFingerprint? @relation(fields: [notificationEventFingerprintId], references: [id], onDelete: SetNull)
+  deliveryAttempts        EmailDeliveryAttempt[]
+
+  @@index([status, availableAt])
+  @@index([status, nextAttemptAt])
+  @@index([recipientId])
+  @@index([createdAt])
+}
+
+model EmailDeliveryAttempt {
+  id                String                     @id @default(cuid())
+  outboxJobId       String
+  attemptNumber     Int
+  status            EmailDeliveryAttemptStatus
+  providerMessageId String?
+  error             String?
+  responsePayload   Json?
+  createdAt         DateTime                   @default(now())
+  outboxJob         EmailOutboxJob             @relation(fields: [outboxJobId], references: [id], onDelete: Cascade)
+
+  @@unique([outboxJobId, attemptNumber])
+  @@index([outboxJobId])
+  @@index([status])
+  @@index([createdAt])
 }
 
 model Notification {

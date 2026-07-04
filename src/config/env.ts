@@ -102,6 +102,15 @@ const frontendOriginSeed = process.env.FRONTEND_URL
 
 const ga4TimeoutRaw = Number(process.env.GA4_TIMEOUT_MS ?? 4000);
 const ga4TimeoutMs = Number.isFinite(ga4TimeoutRaw) && ga4TimeoutRaw > 0 ? ga4TimeoutRaw : 4000;
+const engagementEmailMaxAttemptsRaw = Number(process.env.ENGAGEMENT_EMAIL_MAX_ATTEMPTS ?? 5);
+const engagementEmailMaxAttempts = Number.isFinite(engagementEmailMaxAttemptsRaw) && engagementEmailMaxAttemptsRaw > 0
+  ? Math.floor(engagementEmailMaxAttemptsRaw)
+  : 5;
+const engagementEmailBackoffBaseSecondsRaw = Number(process.env.ENGAGEMENT_EMAIL_BACKOFF_BASE_SECONDS ?? 60);
+const engagementEmailBackoffBaseSeconds =
+  Number.isFinite(engagementEmailBackoffBaseSecondsRaw) && engagementEmailBackoffBaseSecondsRaw > 0
+    ? Math.floor(engagementEmailBackoffBaseSecondsRaw)
+    : 60;
 
 export const env = {
   nodeEnv: process.env.NODE_ENV ?? "development",
@@ -133,4 +142,8 @@ export const env = {
   ga4TimeoutMs,
   googleServiceAccountJson: process.env.GOOGLE_SERVICE_ACCOUNT_JSON?.trim() ?? "",
   googleApplicationCredentials: process.env.GOOGLE_APPLICATION_CREDENTIALS?.trim() ?? "",
+  engagementEmailsEnabled: (process.env.ENGAGEMENT_EMAILS_ENABLED ?? "false").toLowerCase() === "true",
+  engagementEmailDryRun: (process.env.ENGAGEMENT_EMAIL_DRY_RUN ?? "true").toLowerCase() === "true",
+  engagementEmailMaxAttempts,
+  engagementEmailBackoffBaseSeconds,
 };
