@@ -82,7 +82,6 @@ export async function queueEngagementEmail(
 }
 
 export type QueuePhaseHookInput = {
-  eventType: EngagementEventType;
   recipientId: string;
   recipientEmail: string;
   idempotencyKey: string;

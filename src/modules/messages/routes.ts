@@ -3,7 +3,7 @@ import { z } from "zod";
 import { prisma } from "../../lib/prisma";
 import { requireActiveUser, requireAuth, requireVerifiedEmail } from "../../middleware/auth";
 import { parseOrThrow } from "../../utils/validation";
-import { createMessageNotification, createOfferNotification } from "../../utils/notifications";
+import { createMessageNotification, createOfferNotification, queueMessageEmailNotification } from "../../utils/notifications";
 import { emitConversationUpdated, emitMessageNew, emitNotificationNew, emitUnreadMessageCount } from "../../lib/realtime";
 
 const router = Router();
@@ -96,6 +96,14 @@ router.post("/", requireAuth, requireActiveUser, requireVerifiedEmail, async (re
     const recipientIds = participantIds.filter((userId) => userId !== currentUserId);
     const responseMessage = body.clientId ? { ...message, clientId: body.clientId } : message;
 
+    const recipients = recipientIds.length > 0
+      ? await prisma.user.findMany({
+        where: { id: { in: recipientIds } },
+        select: { id: true, email: true },
+      })
+      : [];
+    const recipientEmailById = new Map(recipients.map((recipient) => [recipient.id, recipient.email]));
+
     void prisma.conversation
       .update({
         where: { id: body.conversationId },
@@ -123,6 +131,18 @@ router.post("/", requireAuth, requireActiveUser, requireVerifiedEmail, async (re
                 adTitle: conversation.ad?.title,
               });
           if (notification) emitNotificationNew(recipientId, notification);
+
+          const recipientEmail = recipientEmailById.get(recipientId) ?? "";
+          await queueMessageEmailNotification({
+            recipientId,
+            recipientEmail,
+            senderName: message.sender.fullName,
+            conversationId: body.conversationId,
+            adTitle: conversation.ad?.title,
+            messageId: message.id,
+            messageText: message.text,
+            messageType: message.messageType,
+          });
         } catch (notificationError) {
           console.error("Failed to create message notification", notificationError);
         }
