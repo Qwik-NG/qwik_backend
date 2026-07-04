@@ -1,6 +1,7 @@
 import { prisma } from "./prisma";
 import { queueAdPerformanceReportEmail } from "./engagementOutbox";
 import { env } from "../config/env";
+import { buildBrandedEmailHtml } from "./emailBranding";
 
 type EnqueueAdPerformanceReportsInput = {
   periodStart?: Date;
@@ -118,7 +119,7 @@ function buildEmailBodies(input: {
     ? input.needsAttention.map((listing) => `<li>${escapeHtml(listing.title || "Untitled listing")}</li>`).join("")
     : "<li>None. Great job keeping your listings active.</li>";
 
-  const htmlBody = `<p>Hi ${sellerName},</p>
+  const reportContentHtml = `<p>Hi ${sellerName},</p>
 <p>Here is your Qwik weekly ad performance summary for <strong>${label}</strong>.</p>
 <p><strong>Listings:</strong> total ${input.totals.listingsTotal}, active ${input.totals.active}, sold ${input.totals.sold}, draft ${input.totals.draft}, archived ${input.totals.archived}, promoted ${input.totals.promoted}</p>
 <p><strong>Activity:</strong> saves ${input.totals.saves}, conversations ${input.totals.conversations}, messages ${input.totals.messages}, reviews ${input.totals.reviews}, reports ${input.totals.reports}</p>
@@ -129,6 +130,7 @@ function buildEmailBodies(input: {
 <p><a href="${dashboardUrl}">Open your listings dashboard</a></p>
 <p><a href="${messagesUrl}">Open your messages</a></p>
 <p>You can manage your notification preferences in your account settings.</p>`;
+  const htmlBody = buildBrandedEmailHtml(reportContentHtml, "Your weekly Qwik ad performance summary");
 
   const topRowsText = input.topListings.length > 0
     ? input.topListings.map((listing, index) =>
