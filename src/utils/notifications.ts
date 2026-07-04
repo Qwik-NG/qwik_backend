@@ -2,6 +2,7 @@ import type { PrismaClient } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { env } from "../config/env";
 import { queueNewMessageEmail, queueNewOfferEmail } from "../lib/engagementOutbox";
+import { buildBrandedEmailHtml } from "../lib/emailBranding";
 
 type NotificationClient = PrismaClient | Parameters<Parameters<PrismaClient["$transaction"]>[0]>[0];
 
@@ -104,12 +105,13 @@ export async function queueOfferEmailNotification(
     ? `New offer on Qwik for ${input.adTitle}`
     : "New offer on Qwik";
 
-  const htmlBody = `<p>Hi there,</p>
+  const offerContentHtml = `<p>Hi there,</p>
 <p><strong>${input.senderName}</strong> sent you a new offer of <strong>${amountText}</strong>${listSuffix}.</p>
 <p><em>"${preview}"</em></p>
 <p><a href="${links.conversationUrl}">View offer</a></p>
 <p>If the button does not work, use this link: <a href="${links.fallbackUrl}">${links.fallbackUrl}</a></p>
 <p>You can manage your notification preferences in your account settings.</p>`;
+  const htmlBody = buildBrandedEmailHtml(offerContentHtml, `New offer from ${input.senderName}`);
 
   const textBody = [
     "Hi there,",
@@ -175,12 +177,13 @@ export async function queueMessageEmailNotification(
     ? `New message on Qwik about ${input.adTitle}`
     : "New message on Qwik";
 
-  const htmlBody = `<p>Hi there,</p>
+  const messageContentHtml = `<p>Hi there,</p>
 <p><strong>${input.senderName}</strong> sent you a new message${listSuffix}.</p>
 <p><em>"${preview}"</em></p>
 <p><a href="${links.conversationUrl}">Open messages</a></p>
 <p>If the button does not work, use this link: <a href="${links.fallbackUrl}">${links.fallbackUrl}</a></p>
 <p>You can manage your notification preferences in your account settings.</p>`;
+  const htmlBody = buildBrandedEmailHtml(messageContentHtml, `New message from ${input.senderName}`);
 
   const textBody = [
     `Hi there,`,
