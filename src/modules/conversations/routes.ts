@@ -3,7 +3,7 @@ import { z } from "zod";
 import { prisma } from "../../lib/prisma";
 import { requireActiveUser, requireAuth, requireVerifiedEmail } from "../../middleware/auth";
 import { parseOrThrow } from "../../utils/validation";
-import { createMessageNotification, createOfferNotification } from "../../utils/notifications";
+import { createMessageNotification, createOfferNotification, queueMessageEmailNotification } from "../../utils/notifications";
 import { emitConversationUpdated, emitMessageNew, emitNotificationNew, emitUnreadMessageCount } from "../../lib/realtime";
 
 const router = Router();
@@ -334,6 +334,19 @@ router.post("/", requireAuth, requireActiveUser, requireVerifiedEmail, async (re
       .catch((notificationError) => {
         console.error("Failed to create message notification", notificationError);
       });
+
+    void queueMessageEmailNotification({
+      recipientId: body.recipientId,
+      recipientEmail: recipient.email,
+      senderName: message.sender.fullName,
+      conversationId,
+      adTitle: updatedConversation.ad?.title,
+      messageId: message.id,
+      messageText: message.text,
+      messageType: message.messageType,
+    }).catch((emailQueueError) => {
+      console.error("Failed to queue message email notification", emailQueueError);
+    });
 
     const participantIds = updatedConversation.participants.map((participant) => participant.userId);
     emitMessageNew(conversationId, responseMessage, [body.recipientId]);
