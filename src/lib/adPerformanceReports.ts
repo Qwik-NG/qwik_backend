@@ -2,6 +2,7 @@ import { prisma } from "./prisma";
 import { queueAdPerformanceReportEmail } from "./engagementOutbox";
 import { env } from "../config/env";
 import { buildBrandedEmailHtml } from "./emailBranding";
+import { getAdTelemetryMetrics, getSellerProfileVisits } from "./adMetricTelemetry";
 
 type EnqueueAdPerformanceReportsInput = {
   periodStart?: Date;
@@ -28,6 +29,10 @@ type ListingMetricRow = {
   messages: number;
   reviews: number;
   reports: number;
+  // Phase 3B telemetry
+  views: number;
+  uniqueViewers: number;
+  contactClicks: number;
 };
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -80,7 +85,7 @@ function periodLabel(periodStart: Date, periodEndExclusive: Date) {
 }
 
 function listingScore(row: ListingMetricRow) {
-  return row.saves + row.conversations * 3 + row.messages * 2 + row.reviews - row.reports;
+  return row.views + row.saves * 2 + row.conversations * 3 + row.messages * 2 + row.contactClicks * 4 + row.reviews - row.reports;
 }
 
 function buildEmailBodies(input: {
@@ -99,6 +104,11 @@ function buildEmailBodies(input: {
     messages: number;
     reviews: number;
     reports: number;
+    // Phase 3B telemetry
+    views: number;
+    uniqueViewers: number;
+    contactClicks: number;
+    profileVisits: number;
   };
   topListings: ListingMetricRow[];
   needsAttention: ListingMetricRow[];
@@ -111,7 +121,7 @@ function buildEmailBodies(input: {
   const topRows = input.topListings.length > 0
     ? input.topListings.map((listing, index) => {
         const listingTitle = escapeHtml(listing.title || "Untitled listing");
-        return `<li>#${index + 1} ${listingTitle} - saves ${listing.saves}, conversations ${listing.conversations}, messages ${listing.messages}, reviews ${listing.reviews}, reports ${listing.reports}</li>`;
+        return `<li>#${index + 1} ${listingTitle} - views ${listing.views}, unique viewers ${listing.uniqueViewers}, contact clicks ${listing.contactClicks}, saves ${listing.saves}, conversations ${listing.conversations}, messages ${listing.messages}</li>`;
       }).join("")
     : "<li>No listing activity for this period.</li>";
 
@@ -123,6 +133,7 @@ function buildEmailBodies(input: {
 <p>Here is your Qwik weekly ad performance summary for <strong>${label}</strong>.</p>
 <p><strong>Listings:</strong> total ${input.totals.listingsTotal}, active ${input.totals.active}, sold ${input.totals.sold}, draft ${input.totals.draft}, archived ${input.totals.archived}, promoted ${input.totals.promoted}</p>
 <p><strong>Activity:</strong> saves ${input.totals.saves}, conversations ${input.totals.conversations}, messages ${input.totals.messages}, reviews ${input.totals.reviews}, reports ${input.totals.reports}</p>
+<p><strong>Telemetry:</strong> ad views ${input.totals.views}, unique viewers ${input.totals.uniqueViewers}, contact clicks ${input.totals.contactClicks}, profile visits ${input.totals.profileVisits}</p>
 <p><strong>Top performing listings</strong></p>
 <ul>${topRows}</ul>
 <p><strong>Listings needing attention</strong></p>
@@ -134,7 +145,7 @@ function buildEmailBodies(input: {
 
   const topRowsText = input.topListings.length > 0
     ? input.topListings.map((listing, index) =>
-      `${index + 1}. ${listing.title || "Untitled listing"} (saves ${listing.saves}, conversations ${listing.conversations}, messages ${listing.messages}, reviews ${listing.reviews}, reports ${listing.reports})`).join("\n")
+      `${index + 1}. ${listing.title || "Untitled listing"} (views ${listing.views}, unique viewers ${listing.uniqueViewers}, contact clicks ${listing.contactClicks}, saves ${listing.saves}, conversations ${listing.conversations}, messages ${listing.messages})`).join("\n")
     : "- No listing activity for this period.";
 
   const attentionRowsText = input.needsAttention.length > 0
@@ -148,6 +159,7 @@ function buildEmailBodies(input: {
     "",
     `Listings: total ${input.totals.listingsTotal}, active ${input.totals.active}, sold ${input.totals.sold}, draft ${input.totals.draft}, archived ${input.totals.archived}, promoted ${input.totals.promoted}`,
     `Activity: saves ${input.totals.saves}, conversations ${input.totals.conversations}, messages ${input.totals.messages}, reviews ${input.totals.reviews}, reports ${input.totals.reports}`,
+    `Telemetry: ad views ${input.totals.views}, unique viewers ${input.totals.uniqueViewers}, contact clicks ${input.totals.contactClicks}, profile visits ${input.totals.profileVisits}`,
     "",
     "Top performing listings:",
     topRowsText,
@@ -294,7 +306,29 @@ export async function enqueueAdPerformanceReports(
       messages: messagesByAdMap.get(ad.id) ?? 0,
       reviews: reviewsByAdMap.get(ad.id) ?? 0,
       reports: reportsByAdMap.get(ad.id) ?? 0,
+      // Phase 3B telemetry — filled below after batch fetch
+      views: 0,
+      uniqueViewers: 0,
+      contactClicks: 0,
     }));
+
+    // Phase 3B: batch-fetch telemetry metrics for all this seller's ads
+    // and profile visits for this seller — two queries total, no N+1.
+    const [telemetryByAd, profileVisitMap] = await Promise.all([
+      getAdTelemetryMetrics(adIds, resolvedPeriod.periodStart, resolvedPeriod.periodEnd),
+      getSellerProfileVisits([seller.id], resolvedPeriod.periodStart, resolvedPeriod.periodEnd),
+    ]);
+
+    for (const row of listingMetrics) {
+      const t = telemetryByAd.get(row.id);
+      if (t) {
+        row.views = t.views;
+        row.uniqueViewers = t.uniqueViewers;
+        row.contactClicks = t.contactClicks;
+      }
+    }
+
+    const profileVisits = profileVisitMap.get(seller.id) ?? 0;
 
     const totals = listingMetrics.reduce(
       (acc, row) => {
@@ -322,12 +356,23 @@ export async function enqueueAdPerformanceReports(
         messages: 0,
         reviews: 0,
         reports: 0,
+        views: 0,
+        uniqueViewers: 0,
+        contactClicks: 0,
+        profileVisits,
       },
     );
 
+    // Accumulate per-listing telemetry into totals
+    for (const row of listingMetrics) {
+      totals.views += row.views;
+      totals.uniqueViewers += row.uniqueViewers;
+      totals.contactClicks += row.contactClicks;
+    }
+
     const topListings = [...listingMetrics].sort((a, b) => listingScore(b) - listingScore(a)).slice(0, 3);
     const needsAttention = listingMetrics
-      .filter((row) => row.status === "ACTIVE" && row.saves + row.conversations + row.messages + row.reviews === 0)
+      .filter((row) => row.status === "ACTIVE" && row.saves + row.conversations + row.messages + row.reviews + row.views + row.contactClicks === 0)
       .slice(0, 3);
 
     const template = buildEmailBodies({

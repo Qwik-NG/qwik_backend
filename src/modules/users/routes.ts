@@ -6,6 +6,7 @@ import { prisma } from "../../lib/prisma";
 import { parseOrThrow } from "../../utils/validation";
 import { toAuthUser, toPublicUser } from "../../utils/userResponse";
 import { env } from "../../config/env";
+import { deriveViewerFingerprint, recordAdMetricEvent } from "../../lib/adMetricTelemetry";
 
 const router = Router();
 const sellerSelect = {
@@ -317,4 +318,51 @@ router.get("/:id", async (req, res, next) => {
     res.json({ success: true, data: { ...toPublicUser(user), ads, isFollowing: Boolean(isFollowing) } });
   } catch (e) { next(e); }
 });
+
+// ---------------------------------------------------------------------------
+// Phase 3B — Profile visit telemetry
+// ---------------------------------------------------------------------------
+
+// Record a seller profile visit event.
+// No auth required — anonymous visitors tracked via fingerprint.
+router.post("/:id/profile-visit", async (req, res, next) => {
+  try {
+    const sellerId = String(req.params.id);
+
+    // Only track visits to real, existing user profiles
+    const seller = await prisma.user.findUnique({
+      where: { id: sellerId },
+      select: { id: true, status: true },
+    });
+
+    if (!seller || seller.status !== "ACTIVE") {
+      return res.status(204).send();
+    }
+
+    // Optional viewer identity resolution
+    const visiterId = viewerIdFromAuthorization(req.headers.authorization);
+
+    // Sellers visiting their own profile are not counted
+    if (visiterId && visiterId === sellerId) {
+      return res.status(204).send();
+    }
+
+    const ip = (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim() ?? req.ip ?? "unknown";
+    const ua = (req.headers["user-agent"] as string | undefined) ?? "";
+    const viewerFingerprint = visiterId ? null : deriveViewerFingerprint(ip, ua);
+
+    await recordAdMetricEvent({
+      adId: null,
+      sellerId,
+      eventType: "PROFILE_VISIT",
+      viewerId: visiterId ?? null,
+      viewerFingerprint,
+    });
+
+    return res.status(204).send();
+  } catch (e) {
+    next(e);
+  }
+});
+
 export default router;
