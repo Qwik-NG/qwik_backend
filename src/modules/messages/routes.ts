@@ -3,7 +3,7 @@ import { z } from "zod";
 import { prisma } from "../../lib/prisma";
 import { requireActiveUser, requireAuth, requireVerifiedEmail } from "../../middleware/auth";
 import { parseOrThrow } from "../../utils/validation";
-import { createMessageNotification, createOfferNotification, queueMessageEmailNotification } from "../../utils/notifications";
+import { createMessageNotification, createOfferNotification, queueMessageEmailNotification, queueOfferEmailNotification } from "../../utils/notifications";
 import { emitConversationUpdated, emitMessageNew, emitNotificationNew, emitUnreadMessageCount } from "../../lib/realtime";
 
 const router = Router();
@@ -133,16 +133,29 @@ router.post("/", requireAuth, requireActiveUser, requireVerifiedEmail, async (re
           if (notification) emitNotificationNew(recipientId, notification);
 
           const recipientEmail = recipientEmailById.get(recipientId) ?? "";
-          await queueMessageEmailNotification({
-            recipientId,
-            recipientEmail,
-            senderName: message.sender.fullName,
-            conversationId: body.conversationId,
-            adTitle: conversation.ad?.title,
-            messageId: message.id,
-            messageText: message.text,
-            messageType: message.messageType,
-          });
+          if (body.messageType === "offer" && body.offerAmount) {
+            await queueOfferEmailNotification({
+              recipientId,
+              recipientEmail,
+              senderName: message.sender.fullName,
+              conversationId: body.conversationId,
+              adTitle: conversation.ad?.title,
+              messageId: message.id,
+              messageText: message.text,
+              amount: body.offerAmount,
+            });
+          } else {
+            await queueMessageEmailNotification({
+              recipientId,
+              recipientEmail,
+              senderName: message.sender.fullName,
+              conversationId: body.conversationId,
+              adTitle: conversation.ad?.title,
+              messageId: message.id,
+              messageText: message.text,
+              messageType: message.messageType,
+            });
+          }
         } catch (notificationError) {
           console.error("Failed to create message notification", notificationError);
         }

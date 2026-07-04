@@ -1,7 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { env } from "../config/env";
-import { queueNewMessageEmail } from "../lib/engagementOutbox";
+import { queueNewMessageEmail, queueNewOfferEmail } from "../lib/engagementOutbox";
 
 type NotificationClient = PrismaClient | Parameters<Parameters<PrismaClient["$transaction"]>[0]>[0];
 
@@ -21,6 +21,13 @@ type MessageEmailOutboxInput = MessageNotificationInput & {
 
 type OfferNotificationInput = MessageNotificationInput & {
   amount: number;
+};
+
+type OfferEmailOutboxInput = MessageNotificationInput & {
+  recipientEmail: string;
+  messageId: string;
+  messageText: string;
+  amount?: number | null;
 };
 
 type SellerNewAdNotificationInput = {
@@ -66,6 +73,77 @@ function messageLinks(conversationId: string) {
     conversationUrl: `${baseUrl}${conversationPath}`,
     fallbackUrl: `${baseUrl}${fallbackPath}`,
   };
+}
+
+export async function queueOfferEmailNotification(
+  input: OfferEmailOutboxInput,
+  client: NotificationClient = prisma,
+) {
+  if (!input.recipientEmail) {
+    return { queued: false as const, duplicate: false, reason: "missing-recipient-email" as const };
+  }
+
+  if (!input.amount || input.amount <= 0) {
+    return { queued: false as const, duplicate: false, reason: "missing-offer-amount" as const };
+  }
+
+  const settings = await client.notificationSettings.findUnique({
+    where: { userId: input.recipientId },
+    select: { emailNotifications: true, offerNotifications: true },
+  });
+
+  if (settings && (!settings.emailNotifications || !settings.offerNotifications)) {
+    return { queued: false as const, duplicate: false, reason: "notifications-disabled" as const };
+  }
+
+  const preview = sanitizeMessagePreview(input.messageText);
+  const links = messageLinks(input.conversationId);
+  const listSuffix = input.adTitle ? ` for ${input.adTitle}` : "";
+  const amountText = formatNaira(input.amount);
+  const subject = input.adTitle
+    ? `New offer on Qwik for ${input.adTitle}`
+    : "New offer on Qwik";
+
+  const htmlBody = `<p>Hi there,</p>
+<p><strong>${input.senderName}</strong> sent you a new offer of <strong>${amountText}</strong>${listSuffix}.</p>
+<p><em>"${preview}"</em></p>
+<p><a href="${links.conversationUrl}">View offer</a></p>
+<p>If the button does not work, use this link: <a href="${links.fallbackUrl}">${links.fallbackUrl}</a></p>
+<p>You can manage your notification preferences in your account settings.</p>`;
+
+  const textBody = [
+    "Hi there,",
+    "",
+    `${input.senderName} sent you a new offer of ${amountText}${listSuffix}.`,
+    `"${preview}"`,
+    "",
+    `View offer: ${links.conversationUrl}`,
+    `Fallback: ${links.fallbackUrl}`,
+    "",
+    "You can manage your notification preferences in your account settings.",
+  ].join("\n");
+
+  const { job, duplicate } = await queueNewOfferEmail(
+    {
+      recipientId: input.recipientId,
+      recipientEmail: input.recipientEmail,
+      idempotencyKey: input.messageId,
+      subject,
+      htmlBody,
+      textBody,
+      actionUrl: links.conversationPath,
+      payload: {
+        kind: "new-offer-email",
+        conversationId: input.conversationId,
+        messageId: input.messageId,
+        senderName: input.senderName,
+        offerAmount: input.amount,
+      },
+    },
+    client,
+  );
+
+  return { queued: true as const, duplicate, jobId: job.id };
 }
 
 export async function queueMessageEmailNotification(

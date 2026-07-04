@@ -3,7 +3,7 @@ import { z } from "zod";
 import { prisma } from "../../lib/prisma";
 import { requireActiveUser, requireAuth, requireVerifiedEmail } from "../../middleware/auth";
 import { parseOrThrow } from "../../utils/validation";
-import { createMessageNotification, createOfferNotification, queueMessageEmailNotification } from "../../utils/notifications";
+import { createMessageNotification, createOfferNotification, queueMessageEmailNotification, queueOfferEmailNotification } from "../../utils/notifications";
 import { emitConversationUpdated, emitMessageNew, emitNotificationNew, emitUnreadMessageCount } from "../../lib/realtime";
 
 const router = Router();
@@ -335,16 +335,29 @@ router.post("/", requireAuth, requireActiveUser, requireVerifiedEmail, async (re
         console.error("Failed to create message notification", notificationError);
       });
 
-    void queueMessageEmailNotification({
-      recipientId: body.recipientId,
-      recipientEmail: recipient.email,
-      senderName: message.sender.fullName,
-      conversationId,
-      adTitle: updatedConversation.ad?.title,
-      messageId: message.id,
-      messageText: message.text,
-      messageType: message.messageType,
-    }).catch((emailQueueError) => {
+    const queueEmailRequest = body.messageType === "offer" && body.offerAmount
+      ? queueOfferEmailNotification({
+          recipientId: body.recipientId,
+          recipientEmail: recipient.email,
+          senderName: message.sender.fullName,
+          conversationId,
+          adTitle: updatedConversation.ad?.title,
+          messageId: message.id,
+          messageText: message.text,
+          amount: body.offerAmount,
+        })
+      : queueMessageEmailNotification({
+          recipientId: body.recipientId,
+          recipientEmail: recipient.email,
+          senderName: message.sender.fullName,
+          conversationId,
+          adTitle: updatedConversation.ad?.title,
+          messageId: message.id,
+          messageText: message.text,
+          messageType: message.messageType,
+        });
+
+    void queueEmailRequest.catch((emailQueueError) => {
       console.error("Failed to queue message email notification", emailQueueError);
     });
 
