@@ -111,6 +111,17 @@ const engagementEmailBackoffBaseSeconds =
   Number.isFinite(engagementEmailBackoffBaseSecondsRaw) && engagementEmailBackoffBaseSecondsRaw > 0
     ? Math.floor(engagementEmailBackoffBaseSecondsRaw)
     : 60;
+const engagementOutboxWorkerIntervalMsRaw = Number(process.env.ENGAGEMENT_OUTBOX_WORKER_INTERVAL_MS ?? 60000);
+const engagementOutboxWorkerIntervalMs =
+  Number.isFinite(engagementOutboxWorkerIntervalMsRaw) && engagementOutboxWorkerIntervalMsRaw >= 5000
+    ? Math.floor(engagementOutboxWorkerIntervalMsRaw)
+    : 60000;
+const engagementOutboxWorkerBatchSizeRaw = Number(process.env.ENGAGEMENT_OUTBOX_WORKER_BATCH_SIZE ?? 20);
+const engagementOutboxWorkerBatchSize =
+  Number.isFinite(engagementOutboxWorkerBatchSizeRaw) && engagementOutboxWorkerBatchSizeRaw > 0
+    ? Math.min(200, Math.floor(engagementOutboxWorkerBatchSizeRaw))
+    : 20;
+const engagementOutboxWorkerEnabled = (process.env.ENGAGEMENT_OUTBOX_WORKER_ENABLED ?? "true").toLowerCase() !== "false";
 
 export const env = {
   nodeEnv: process.env.NODE_ENV ?? "development",
@@ -146,4 +157,7 @@ export const env = {
   engagementEmailDryRun: (process.env.ENGAGEMENT_EMAIL_DRY_RUN ?? "true").toLowerCase() === "true",
   engagementEmailMaxAttempts,
   engagementEmailBackoffBaseSeconds,
+  engagementOutboxWorkerEnabled,
+  engagementOutboxWorkerIntervalMs,
+  engagementOutboxWorkerBatchSize,
 };
