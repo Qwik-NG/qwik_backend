@@ -2,12 +2,22 @@ import { Router } from "express";
 import { z } from "zod";
 import { env } from "../../config/env";
 import { processPendingEmailOutboxJobs } from "../../lib/engagementWorker";
+import { enqueueAdPerformanceReports } from "../../lib/adPerformanceReports";
 import { parseOrThrow } from "../../utils/validation";
 
 const router = Router();
 
 const processOutboxSchema = z.object({
   batchSize: z.number().int().min(1).max(200).optional(),
+});
+
+const enqueueAdPerformanceReportsSchema = z.object({
+  periodStart: z.string().datetime().optional(),
+  periodEnd: z.string().datetime().optional(),
+  sellerIds: z.array(z.string().min(1)).max(500).optional(),
+}).refine((value) => Boolean(value.periodStart) === Boolean(value.periodEnd), {
+  message: "periodStart and periodEnd must be provided together",
+  path: ["periodEnd"],
 });
 
 function isInternalAuthorized(headers: Record<string, unknown>) {
@@ -62,6 +72,44 @@ router.post("/engagement/process-outbox", async (req, res, next) => {
         summary,
       },
       message: "Outbox processing completed",
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/engagement/enqueue-ad-performance-reports", async (req, res, next) => {
+  const startedAt = Date.now();
+
+  try {
+    if (!isInternalAuthorized(req.headers as Record<string, unknown>)) {
+      return res.status(401).json({ success: false, message: "Unauthorized" });
+    }
+
+    const body = parseOrThrow(enqueueAdPerformanceReportsSchema, req.body ?? {});
+
+    const periodStart = body.periodStart ? new Date(body.periodStart) : undefined;
+    const periodEnd = body.periodEnd ? new Date(body.periodEnd) : undefined;
+
+    if (periodStart && periodEnd && !(periodStart < periodEnd)) {
+      return res.status(400).json({ success: false, message: "periodStart must be earlier than periodEnd" });
+    }
+
+    const summary = await enqueueAdPerformanceReports({
+      periodStart,
+      periodEnd,
+      sellerIds: body.sellerIds,
+    });
+
+    const durationMs = Date.now() - startedAt;
+
+    return res.json({
+      success: true,
+      data: {
+        ...summary,
+        durationMs,
+      },
+      message: "Ad performance report jobs enqueued",
     });
   } catch (error) {
     next(error);
