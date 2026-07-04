@@ -8,4 +8,5 @@ initRealtime(server);
 
 server.listen(env.port, () => {
   console.log(`Qwik backend listening on http://localhost:${env.port}`);
+  console.log("[engagement-outbox] Manual trigger endpoint ready at POST /api/internal/engagement/process-outbox");
 });

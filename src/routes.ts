@@ -11,6 +11,7 @@ import notificationRoutes from "./modules/notifications/routes";
 import verificationRoutes from "./modules/verification/routes";
 import paymentRoutes from "./modules/payments/routes";
 import seoRoutes from "./modules/seo/routes";
+import internalRoutes from "./modules/internal/routes";
 import { createRateLimiter } from "./middleware/rateLimit";
 
 const router = Router();
@@ -32,5 +33,6 @@ router.use("/messages", messageRateLimit, messageRoutes);
 router.use("/notifications", notificationRoutes);
 router.use("/verification", verificationRoutes);
 router.use("/payments", paymentRoutes);
+router.use("/internal", internalRoutes);
 router.use("/", seoRoutes);
 export default router;
