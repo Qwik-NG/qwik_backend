@@ -79,6 +79,12 @@ enum EngagementEventType {
   AD_PERFORMANCE_REPORT
 }
 
+enum AdMetricEventType {
+  AD_VIEW
+  CONTACT_CLICK
+  PROFILE_VISIT
+}
+
 enum EmailOutboxStatus {
   PENDING
   PROCESSING
@@ -135,6 +141,8 @@ model User {
   adminAuditLogs  AdminAuditLog[] @relation("AdminAuditLogs")
   following       Follow[] @relation("UserFollowing")
   followers       Follow[] @relation("UserFollowers")
+  sellerMetricEvents AdMetricEvent[] @relation("SellerMetricEvents")
+  viewerMetricEvents AdMetricEvent[] @relation("ViewerMetricEvents")
   resetToken      String?
   resetTokenExpAt DateTime?
   emailVerifiedAt DateTime?
@@ -215,6 +223,7 @@ model Ad {
   reports         Report[]
   conversations   Conversation[]
   payments        PaymentTransaction[]
+  metricEvents    AdMetricEvent[]
 
   @@index([categoryId])
   @@index([location])
@@ -536,4 +545,26 @@ model NotificationSettings {
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
   user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model AdMetricEvent {
+  id                String            @id @default(cuid())
+  adId              String?
+  sellerId          String
+  eventType         AdMetricEventType
+  viewerId          String?
+  viewerFingerprint String?
+  createdAt         DateTime          @default(now())
+
+  ad                Ad?               @relation(fields: [adId], references: [id], onDelete: Cascade)
+  seller            User              @relation("SellerMetricEvents", fields: [sellerId], references: [id], onDelete: Cascade)
+  viewer            User?             @relation("ViewerMetricEvents", fields: [viewerId], references: [id], onDelete: SetNull)
+
+  @@index([adId, eventType, createdAt])
+  @@index([sellerId, eventType, createdAt])
+  @@index([viewerId, adId, eventType, createdAt])
+  @@index([viewerFingerprint, adId, eventType, createdAt])
+  @@index([viewerId, sellerId, eventType, createdAt])
+  @@index([viewerFingerprint, sellerId, eventType, createdAt])
+  @@index([createdAt])
 }

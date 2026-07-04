@@ -10,6 +10,7 @@ import { parseOrThrow, createImageUrlSchema } from "../../utils/validation";
 import { requireActiveUser, requireAuth, requireVerifiedEmail } from "../../middleware/auth";
 import { getPromotionPaymentAmountKobo, PROMOTION_PLAN_VALUES } from "../../utils/paymentPricing";
 import { createSellerNewAdNotifications } from "../../utils/notifications";
+import { deriveViewerFingerprint, recordAdMetricEvent } from "../../lib/adMetricTelemetry";
 const router = Router();
 
 const DEV_TIMING_ENABLED = process.env.NODE_ENV !== "production";
@@ -1683,6 +1684,117 @@ router.patch("/:id/mark-unavailable", requireAuth, async (req, res, next) => {
     clearAdCaches(id);
     clearSitemapCache();
     res.json({ success: true, message: "Ad marked unavailable", data: withSellerVerifiedAd(updated) });
+  } catch (e) {
+    next(e);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Phase 3B — Telemetry endpoints
+// ---------------------------------------------------------------------------
+
+// Record an ad view event.
+// No auth required — anonymous viewers tracked via fingerprint.
+router.post("/:id/view", async (req, res, next) => {
+  try {
+    const id = String(req.params.id);
+
+    const ad = await prisma.ad.findUnique({
+      where: { id },
+      select: { id: true, userId: true, status: true },
+    });
+
+    // Silently ignore unknown or inactive ads to prevent enumeration
+    if (!ad || ad.status !== "ACTIVE") {
+      return res.status(204).send();
+    }
+
+    // Resolve viewer identity
+    const authHeader = req.headers.authorization ?? "";
+    let viewerId: string | null = null;
+    if (authHeader.startsWith("Bearer ")) {
+      try {
+        const jwt = await import("jsonwebtoken");
+        const payload = jwt.default.verify(
+          authHeader.split(" ")[1],
+          (await import("../../config/env")).env.jwtSecret,
+        ) as { userId?: string };
+        viewerId = payload.userId ?? null;
+      } catch {
+        // Token invalid — treat as anonymous; fingerprint will be used
+      }
+    }
+
+    const ip = (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim() ?? req.ip ?? "unknown";
+    const ua = (req.headers["user-agent"] as string | undefined) ?? "";
+    const viewerFingerprint = viewerId ? null : deriveViewerFingerprint(ip, ua);
+
+    // Self-views by seller are not counted
+    if (viewerId && viewerId === ad.userId) {
+      return res.status(204).send();
+    }
+
+    await recordAdMetricEvent({
+      adId: id,
+      sellerId: ad.userId,
+      eventType: "AD_VIEW",
+      viewerId,
+      viewerFingerprint,
+    });
+
+    return res.status(204).send();
+  } catch (e) {
+    next(e);
+  }
+});
+
+// Record a contact click event ("Show Phone" / "Chat" CTA activation).
+// No auth required — same identity resolution as view.
+router.post("/:id/contact-click", async (req, res, next) => {
+  try {
+    const id = String(req.params.id);
+
+    const ad = await prisma.ad.findUnique({
+      where: { id },
+      select: { id: true, userId: true, status: true },
+    });
+
+    if (!ad || ad.status !== "ACTIVE") {
+      return res.status(204).send();
+    }
+
+    const authHeader = req.headers.authorization ?? "";
+    let viewerId: string | null = null;
+    if (authHeader.startsWith("Bearer ")) {
+      try {
+        const jwt = await import("jsonwebtoken");
+        const payload = jwt.default.verify(
+          authHeader.split(" ")[1],
+          (await import("../../config/env")).env.jwtSecret,
+        ) as { userId?: string };
+        viewerId = payload.userId ?? null;
+      } catch {
+        // Treat as anonymous
+      }
+    }
+
+    const ip = (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim() ?? req.ip ?? "unknown";
+    const ua = (req.headers["user-agent"] as string | undefined) ?? "";
+    const viewerFingerprint = viewerId ? null : deriveViewerFingerprint(ip, ua);
+
+    if (viewerId && viewerId === ad.userId) {
+      return res.status(204).send();
+    }
+
+    await recordAdMetricEvent({
+      adId: id,
+      sellerId: ad.userId,
+      eventType: "CONTACT_CLICK",
+      viewerId,
+      viewerFingerprint,
+    });
+
+    return res.status(204).send();
   } catch (e) {
     next(e);
   }
