@@ -10,7 +10,7 @@ const SITEMAP_CACHE_FRESH_MS = 5 * 60_000;
 const SITEMAP_CACHE_STALE_MS = 10 * 60_000;
 const SITEMAP_CACHE_CONTROL = "public, max-age=300, stale-while-revalidate=600";
 
-const STATIC_URLS = ["/", "/search", "/login", "/signup"];
+const STATIC_URLS = ["/", "/search", "/about", "/blog", "/career", "/terms", "/privacy-policy", "/faqs", "/support"];
 
 type CacheEntry<T> = {
   value: T;
