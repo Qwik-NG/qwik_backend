@@ -5,7 +5,9 @@ const router = Router();
 
 const STATIC_SITE_BASE_URL = "https://www.qwik.ng";
 const PRODUCT_PATH_PREFIX = "/product-details";
-const PRODUCTS_PER_SITEMAP = 10_000;
+const VENDOR_PATH_PREFIX = "/users";
+const CATEGORY_SEARCH_PATH = "/search-results";
+const ENTRIES_PER_SITEMAP = 10_000;
 const SITEMAP_CACHE_FRESH_MS = 5 * 60_000;
 const SITEMAP_CACHE_STALE_MS = 10 * 60_000;
 const SITEMAP_CACHE_CONTROL = "public, max-age=300, stale-while-revalidate=600";
@@ -20,6 +22,8 @@ type CacheEntry<T> = {
 
 const sitemapCountCache = new Map<string, CacheEntry<number>>();
 const sitemapProductsCache = new Map<string, CacheEntry<Array<{ id: string; updatedAt: Date }>>>();
+const sitemapVendorsCache = new Map<string, CacheEntry<Array<{ id: string; updatedAt: Date }>>>();
+const sitemapCategoriesCache = new Map<string, CacheEntry<Array<{ slug: string; parentSlug: string | null }>>>();
 const sitemapStaticCache = new Map<string, CacheEntry<string>>();
 const sitemapIndexCache = new Map<string, CacheEntry<string>>();
 const sitemapRefreshInFlight = new Set<string>();
@@ -135,8 +139,8 @@ async function getProductPageRows(page: number) {
             updatedAt: true,
           },
           orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
-          skip: (page - 1) * PRODUCTS_PER_SITEMAP,
-          take: PRODUCTS_PER_SITEMAP,
+          skip: (page - 1) * ENTRIES_PER_SITEMAP,
+          take: ENTRIES_PER_SITEMAP,
         });
         setCachedValue(sitemapProductsCache, cacheKey, refreshed);
       });
@@ -154,12 +158,93 @@ async function getProductPageRows(page: number) {
       updatedAt: true,
     },
     orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
-    skip: (page - 1) * PRODUCTS_PER_SITEMAP,
-    take: PRODUCTS_PER_SITEMAP,
+    skip: (page - 1) * ENTRIES_PER_SITEMAP,
+    take: ENTRIES_PER_SITEMAP,
   });
 
   setCachedValue(sitemapProductsCache, cacheKey, rows);
   return rows;
+}
+
+// A vendor/store page is only indexable once the seller has at least one active, public listing.
+const ACTIVE_VENDOR_WHERE = {
+  status: "ACTIVE" as const,
+  ads: { some: { status: "ACTIVE" as const } },
+};
+
+async function getActiveVendorCount() {
+  const cacheKey = "active-vendor-count";
+  const cached = getCachedValue(sitemapCountCache, cacheKey);
+  if (cached) {
+    if (cached.isStale) {
+      runStaleRefresh(cacheKey, async () => {
+        const refreshed = await prisma.user.count({ where: ACTIVE_VENDOR_WHERE });
+        setCachedValue(sitemapCountCache, cacheKey, refreshed);
+      });
+    }
+    return cached.value;
+  }
+
+  const count = await prisma.user.count({ where: ACTIVE_VENDOR_WHERE });
+  setCachedValue(sitemapCountCache, cacheKey, count);
+  return count;
+}
+
+async function getVendorPageRows(page: number) {
+  const cacheKey = `vendors:${page}`;
+  const cached = getCachedValue(sitemapVendorsCache, cacheKey);
+  if (cached) {
+    if (cached.isStale) {
+      runStaleRefresh(cacheKey, async () => {
+        const refreshed = await prisma.user.findMany({
+          where: ACTIVE_VENDOR_WHERE,
+          select: { id: true, updatedAt: true },
+          orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
+          skip: (page - 1) * ENTRIES_PER_SITEMAP,
+          take: ENTRIES_PER_SITEMAP,
+        });
+        setCachedValue(sitemapVendorsCache, cacheKey, refreshed);
+      });
+    }
+    return cached.value;
+  }
+
+  const rows = await prisma.user.findMany({
+    where: ACTIVE_VENDOR_WHERE,
+    select: { id: true, updatedAt: true },
+    orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
+    skip: (page - 1) * ENTRIES_PER_SITEMAP,
+    take: ENTRIES_PER_SITEMAP,
+  });
+
+  setCachedValue(sitemapVendorsCache, cacheKey, rows);
+  return rows;
+}
+
+async function getCategoriesForSitemap() {
+  const cacheKey = "all";
+  const cached = getCachedValue(sitemapCategoriesCache, cacheKey);
+  if (cached) {
+    if (cached.isStale) {
+      runStaleRefresh(cacheKey, async () => {
+        const rows = await prisma.category.findMany({
+          select: { slug: true, parent: { select: { slug: true } } },
+          orderBy: { slug: "asc" },
+        });
+        const refreshed = rows.map((row) => ({ slug: row.slug, parentSlug: row.parent?.slug ?? null }));
+        setCachedValue(sitemapCategoriesCache, cacheKey, refreshed);
+      });
+    }
+    return cached.value;
+  }
+
+  const rows = await prisma.category.findMany({
+    select: { slug: true, parent: { select: { slug: true } } },
+    orderBy: { slug: "asc" },
+  });
+  const categories = rows.map((row) => ({ slug: row.slug, parentSlug: row.parent?.slug ?? null }));
+  setCachedValue(sitemapCategoriesCache, cacheKey, categories);
+  return categories;
 }
 
 function buildStaticSitemapXml() {
@@ -181,9 +266,32 @@ function buildProductsSitemapXml(rows: Array<{ id: string; updatedAt: Date }>) {
   return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls}\n</urlset>`;
 }
 
+function buildVendorsSitemapXml(rows: Array<{ id: string; updatedAt: Date }>) {
+  const urls = rows.map((row) => {
+    const loc = escapeXml(`${STATIC_SITE_BASE_URL}${VENDOR_PATH_PREFIX}/${encodeURIComponent(row.id)}`);
+    const lastmod = escapeXml(toIsoDate(row.updatedAt));
+    return `  <url><loc>${loc}</loc><lastmod>${lastmod}</lastmod></url>`;
+  }).join("\n");
+
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls}\n</urlset>`;
+}
+
+function buildCategoriesSitemapXml(categories: Array<{ slug: string; parentSlug: string | null }>) {
+  const urls = categories.map((category) => {
+    const params = category.parentSlug
+      ? `category=${encodeURIComponent(category.parentSlug)}&subcategory=${encodeURIComponent(category.slug)}`
+      : `category=${encodeURIComponent(category.slug)}`;
+    const loc = escapeXml(`${STATIC_SITE_BASE_URL}${CATEGORY_SEARCH_PATH}?${params}`);
+    return `  <url><loc>${loc}</loc></url>`;
+  }).join("\n");
+
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls}\n</urlset>`;
+}
+
 function buildSitemapIndexXml(input: {
   backendBaseUrl: string;
   productPages: number;
+  vendorPages: number;
   staticUpdatedAt: Date;
 }) {
   const entries: string[] = [];
@@ -191,10 +299,19 @@ function buildSitemapIndexXml(input: {
   entries.push(
     `  <sitemap><loc>${escapeXml(`${input.backendBaseUrl}/api/sitemaps/static.xml`)}</loc><lastmod>${escapeXml(toIsoDate(input.staticUpdatedAt))}</lastmod></sitemap>`,
   );
+  entries.push(
+    `  <sitemap><loc>${escapeXml(`${input.backendBaseUrl}/api/sitemaps/categories.xml`)}</loc><lastmod>${escapeXml(toIsoDate(input.staticUpdatedAt))}</lastmod></sitemap>`,
+  );
 
   for (let page = 1; page <= input.productPages; page += 1) {
     entries.push(
       `  <sitemap><loc>${escapeXml(`${input.backendBaseUrl}/api/sitemaps/products-${page}.xml`)}</loc><lastmod>${escapeXml(toIsoDate(input.staticUpdatedAt))}</lastmod></sitemap>`,
+    );
+  }
+
+  for (let page = 1; page <= input.vendorPages; page += 1) {
+    entries.push(
+      `  <sitemap><loc>${escapeXml(`${input.backendBaseUrl}/api/sitemaps/vendors-${page}.xml`)}</loc><lastmod>${escapeXml(toIsoDate(input.staticUpdatedAt))}</lastmod></sitemap>`,
     );
   }
 
@@ -204,6 +321,8 @@ function buildSitemapIndexXml(input: {
 export function clearSitemapCache() {
   sitemapCountCache.clear();
   sitemapProductsCache.clear();
+  sitemapVendorsCache.clear();
+  sitemapCategoriesCache.clear();
   sitemapStaticCache.clear();
   sitemapIndexCache.clear();
 }
@@ -216,11 +335,13 @@ router.get("/sitemap.xml", async (req, res, next) => {
     if (cached) {
       if (cached.isStale) {
         runStaleRefresh(cacheKey, async () => {
-          const count = await getActiveProductCount();
-          const productPages = Math.ceil(count / PRODUCTS_PER_SITEMAP);
+          const [productCount, vendorCount] = await Promise.all([getActiveProductCount(), getActiveVendorCount()]);
+          const productPages = Math.ceil(productCount / ENTRIES_PER_SITEMAP);
+          const vendorPages = Math.ceil(vendorCount / ENTRIES_PER_SITEMAP);
           const refreshed = buildSitemapIndexXml({
             backendBaseUrl,
             productPages,
+            vendorPages,
             staticUpdatedAt: new Date(),
           });
           setCachedValue(sitemapIndexCache, cacheKey, refreshed);
@@ -229,11 +350,13 @@ router.get("/sitemap.xml", async (req, res, next) => {
       return xmlResponse(res, cached.value);
     }
 
-    const count = await getActiveProductCount();
-    const productPages = Math.ceil(count / PRODUCTS_PER_SITEMAP);
+    const [productCount, vendorCount] = await Promise.all([getActiveProductCount(), getActiveVendorCount()]);
+    const productPages = Math.ceil(productCount / ENTRIES_PER_SITEMAP);
+    const vendorPages = Math.ceil(vendorCount / ENTRIES_PER_SITEMAP);
     const xml = buildSitemapIndexXml({
       backendBaseUrl,
       productPages,
+      vendorPages,
       staticUpdatedAt: new Date(),
     });
     setCachedValue(sitemapIndexCache, cacheKey, xml);
@@ -275,6 +398,32 @@ router.get("/sitemaps/products-:page.xml", async (req, res, next) => {
 
     const rows = await getProductPageRows(page);
     const xml = buildProductsSitemapXml(rows);
+    return xmlResponse(res, xml);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/sitemaps/vendors-:page.xml", async (req, res, next) => {
+  try {
+    const pageRaw = String(req.params.page || "").trim();
+    const page = Number.parseInt(pageRaw, 10);
+    if (!Number.isInteger(page) || page < 1) {
+      return res.status(400).json({ success: false, message: "Invalid sitemap page" });
+    }
+
+    const rows = await getVendorPageRows(page);
+    const xml = buildVendorsSitemapXml(rows);
+    return xmlResponse(res, xml);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/sitemaps/categories.xml", async (_req, res, next) => {
+  try {
+    const categories = await getCategoriesForSitemap();
+    const xml = buildCategoriesSitemapXml(categories);
     return xmlResponse(res, xml);
   } catch (error) {
     next(error);
