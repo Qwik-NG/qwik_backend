@@ -144,6 +144,8 @@ model User {
   sellerMetricEvents AdMetricEvent[] @relation("SellerMetricEvents")
   viewerMetricEvents AdMetricEvent[] @relation("ViewerMetricEvents")
   referralCode    ReferralCode?
+  referralsMade     Referral[] @relation("ReferralsMade")
+  referralReceived  Referral?  @relation("ReferralReceived")
   resetToken      String?
   resetTokenExpAt DateTime?
   emailVerifiedAt DateTime?
@@ -162,6 +164,30 @@ model ReferralCode {
   code      String   @unique
   createdAt DateTime @default(now())
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+enum ReferralStatus {
+  PENDING_VERIFICATION
+  ACTIVE
+  REVOKED
+}
+
+model Referral {
+  id              String         @id @default(cuid())
+  referrerId      String
+  referredUserId  String         @unique
+  code            String
+  status          ReferralStatus @default(PENDING_VERIFICATION)
+  signupIp        String?
+  signupUserAgent String?
+  activatedAt     DateTime?
+  revokedAt       DateTime?
+  revokedReason   String?
+  createdAt       DateTime       @default(now())
+  referrer        User           @relation("ReferralsMade", fields: [referrerId], references: [id], onDelete: Cascade)
+  referredUser    User           @relation("ReferralReceived", fields: [referredUserId], references: [id], onDelete: Cascade)
+
+  @@index([referrerId])
 }
 
 model AdminAuditLog {
