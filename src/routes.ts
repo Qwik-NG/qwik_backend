@@ -10,6 +10,7 @@ import messageRoutes from "./modules/messages/routes";
 import notificationRoutes from "./modules/notifications/routes";
 import verificationRoutes from "./modules/verification/routes";
 import paymentRoutes from "./modules/payments/routes";
+import referralRoutes from "./modules/referrals/routes";
 import seoRoutes from "./modules/seo/routes";
 import internalRoutes from "./modules/internal/routes";
 import { createRateLimiter } from "./middleware/rateLimit";
@@ -19,6 +20,7 @@ const globalRateLimit = createRateLimiter({ keyPrefix: "global", windowMs: 15 * 
 const authRateLimit = createRateLimiter({ keyPrefix: "auth", windowMs: 15 * 60_000, max: 50 });
 const uploadRateLimit = createRateLimiter({ keyPrefix: "uploads", windowMs: 15 * 60_000, max: 30 });
 const messageRateLimit = createRateLimiter({ keyPrefix: "messages", windowMs: 60_000, max: 60 });
+const referralRateLimit = createRateLimiter({ keyPrefix: "referrals", windowMs: 60_000, max: 30 });
 
 router.get("/health", (_req, res) => res.json({ success: true, data: { status: "ok" }, message: "Qwik API is running" }));
 router.use(globalRateLimit);
@@ -33,6 +35,7 @@ router.use("/messages", messageRateLimit, messageRoutes);
 router.use("/notifications", notificationRoutes);
 router.use("/verification", verificationRoutes);
 router.use("/payments", paymentRoutes);
+router.use("/referrals", referralRateLimit, referralRoutes);
 router.use("/internal", internalRoutes);
 router.use("/", seoRoutes);
 export default router;

@@ -143,6 +143,7 @@ model User {
   followers       Follow[] @relation("UserFollowers")
   sellerMetricEvents AdMetricEvent[] @relation("SellerMetricEvents")
   viewerMetricEvents AdMetricEvent[] @relation("ViewerMetricEvents")
+  referralCode    ReferralCode?
   resetToken      String?
   resetTokenExpAt DateTime?
   emailVerifiedAt DateTime?
@@ -153,6 +154,14 @@ model User {
   emailVerificationOtpLockedUntil DateTime?
 
   @@index([locationState])
+}
+
+model ReferralCode {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  code      String   @unique
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model AdminAuditLog {
