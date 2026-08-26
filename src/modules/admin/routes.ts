@@ -8,6 +8,7 @@ import { parseOrThrow } from "../../utils/validation";
 import { getCached, setCached, getCacheKey, invalidateCache, CACHE_TTLS } from "../../lib/admin-cache";
 import { env } from "../../config/env";
 import { fetchGa4TrafficMetrics } from "../../lib/ga4-reporting";
+import { attemptReferralRewardAccrual } from "../referrals/accrual";
 
 const resend = env.resendApiKey ? new Resend(env.resendApiKey) : null;
 
@@ -1149,7 +1150,7 @@ router.patch("/verifications/:id", async (req: Request, res: Response) => {
     const existing = await prisma.verificationApplication.findUnique({ where: { id }, select: { id: true, status: true } });
     if (!existing) return notFound(res, "Verification application not found");
 
-    const verification = await prisma.verificationApplication.update({
+    const updateVerification = prisma.verificationApplication.update({
       where: { id },
       data: {
         status: body.status,
@@ -1177,6 +1178,9 @@ router.patch("/verifications/:id", async (req: Request, res: Response) => {
         },
       },
     });
+    const [verification] = body.status === "APPROVED"
+      ? await prisma.$transaction([updateVerification, attemptReferralRewardAccrual(prisma, id)])
+      : await prisma.$transaction([updateVerification]);
 
     // Invalidate related caches
     invalidateCache("/admin/verifications", "/admin/stats", "/admin/audit-log");

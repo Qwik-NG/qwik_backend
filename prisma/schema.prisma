@@ -146,6 +146,7 @@ model User {
   referralCode    ReferralCode?
   referralsMade     Referral[] @relation("ReferralsMade")
   referralReceived  Referral?  @relation("ReferralReceived")
+  referralRewards   ReferralReward[] @relation("ReferralRewards")
   resetToken      String?
   resetTokenExpAt DateTime?
   emailVerifiedAt DateTime?
@@ -172,6 +173,13 @@ enum ReferralStatus {
   REVOKED
 }
 
+enum ReferralRewardStatus {
+  PENDING
+  SETTLED
+  PAID
+  REVERSED
+}
+
 model Referral {
   id              String         @id @default(cuid())
   referrerId      String
@@ -186,8 +194,34 @@ model Referral {
   createdAt       DateTime       @default(now())
   referrer        User           @relation("ReferralsMade", fields: [referrerId], references: [id], onDelete: Cascade)
   referredUser    User           @relation("ReferralReceived", fields: [referredUserId], references: [id], onDelete: Cascade)
+  rewards         ReferralReward[]
 
   @@index([referrerId])
+}
+
+model ReferralReward {
+  id               String               @id @default(cuid())
+  referralId       String
+  paymentId        String               @unique
+  referrerId       String
+  qualifyingAmount Int
+  rewardPercent    Float
+  rewardAmount     Int
+  status           ReferralRewardStatus @default(PENDING)
+  cycleId          String?
+  payoutId         String?
+  reversedAt       DateTime?
+  reversalReason   String?
+  correctionOfId   String?
+  createdAt        DateTime             @default(now())
+  referral         Referral             @relation(fields: [referralId], references: [id], onDelete: Cascade)
+  payment          PaymentTransaction   @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  referrer         User                 @relation("ReferralRewards", fields: [referrerId], references: [id], onDelete: Cascade)
+  correctionOf     ReferralReward?      @relation("ReferralRewardCorrections", fields: [correctionOfId], references: [id], onDelete: SetNull)
+  corrections      ReferralReward[]     @relation("ReferralRewardCorrections")
+
+  @@index([referralId])
+  @@index([referrerId, status])
 }
 
 model AdminAuditLog {
@@ -433,6 +467,7 @@ model PaymentTransaction {
   user           User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
   verification   VerificationApplication? @relation(fields: [verificationId], references: [id], onDelete: SetNull)
   ad             Ad?                      @relation(fields: [adId], references: [id], onDelete: SetNull)
+  referralReward ReferralReward?
 
   @@index([userId])
   @@index([verificationId])

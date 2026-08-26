@@ -6,6 +6,7 @@ import { prisma } from "../../lib/prisma";
 import { requireAuth } from "../../middleware/auth";
 import { getPromotionDurationDays, getPromotionPaymentAmountKobo, isPromotionPlan, VERIFICATION_PAYMENT_AMOUNT_KOBO } from "../../utils/paymentPricing";
 import { parseOrThrow } from "../../utils/validation";
+import { attemptReferralRewardAccrual } from "../referrals/accrual";
 
 const router = Router();
 
@@ -95,6 +96,9 @@ async function applyPaymentStatus(tx: Parameters<Parameters<typeof prisma.$trans
   }
 
   if (payment.status === input.status) {
+    if (payment.purpose === "VERIFICATION" && input.status === "PAID" && payment.verificationId) {
+      await attemptReferralRewardAccrual(tx, payment.verificationId);
+    }
     return payment;
   }
 
@@ -108,13 +112,23 @@ async function applyPaymentStatus(tx: Parameters<Parameters<typeof prisma.$trans
   });
 
   if (updatedPayment.verificationId) {
-    await tx.verificationApplication.update({
+    const verification = await tx.verificationApplication.findUnique({
       where: { id: updatedPayment.verificationId },
-      data: {
-        paymentStatus: input.status === "PAID" ? "PAID" : input.status === "FAILED" ? "FAILED" : input.status === "CANCELLED" ? "FAILED" : "PENDING",
-        ...(input.status === "PAID" ? { status: "SUBMITTED", submittedAt: new Date(), rejectionReason: null } : {}),
-      },
+      select: { status: true },
     });
+    if (verification) {
+      await tx.verificationApplication.update({
+        where: { id: updatedPayment.verificationId },
+        data: {
+          paymentStatus: input.status === "PAID" ? "PAID" : input.status === "FAILED" ? "FAILED" : input.status === "CANCELLED" ? "FAILED" : "PENDING",
+          ...(input.status === "PAID" && verification.status !== "APPROVED" ? { status: "SUBMITTED", submittedAt: new Date(), rejectionReason: null } : {}),
+        },
+      });
+    }
+  }
+
+  if (updatedPayment.purpose === "VERIFICATION" && input.status === "PAID" && updatedPayment.verificationId) {
+    await attemptReferralRewardAccrual(tx, updatedPayment.verificationId);
   }
 
   if (
