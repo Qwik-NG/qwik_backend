@@ -20,37 +20,38 @@ function generateReferralCode() {
   return code;
 }
 
+// Race-safe find-or-create, shared by every endpoint that needs the caller's referral code.
+async function getOrCreateReferralCode(userId: string) {
+  const existing = await prisma.referralCode.findUnique({ where: { userId } });
+  if (existing) return existing;
+
+  for (let attempt = 0; attempt < MAX_CREATE_ATTEMPTS; attempt += 1) {
+    try {
+      return await prisma.referralCode.create({
+        data: { userId, code: generateReferralCode() },
+      });
+    } catch (e) {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+        const target = (e.meta?.target as string[] | undefined) ?? [];
+        if (target.includes("userId")) {
+          // Another concurrent request already created this user's code first.
+          const winner = await prisma.referralCode.findUnique({ where: { userId } });
+          if (winner) return winner;
+        }
+        // Otherwise a code collision occurred; retry with a freshly generated code.
+        continue;
+      }
+      throw e;
+    }
+  }
+
+  throw Object.assign(new Error("Failed to generate referral code"), { status: 500 });
+}
+
 router.get("/me", async (req, res, next) => {
   try {
-    const userId = req.auth!.userId;
-
-    const existing = await prisma.referralCode.findUnique({ where: { userId } });
-    if (existing) {
-      return res.json({ success: true, data: { code: existing.code } });
-    }
-
-    for (let attempt = 0; attempt < MAX_CREATE_ATTEMPTS; attempt += 1) {
-      try {
-        const created = await prisma.referralCode.create({
-          data: { userId, code: generateReferralCode() },
-        });
-        return res.status(201).json({ success: true, data: { code: created.code } });
-      } catch (e) {
-        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
-          const target = (e.meta?.target as string[] | undefined) ?? [];
-          if (target.includes("userId")) {
-            // Another concurrent request already created this user's code first.
-            const winner = await prisma.referralCode.findUnique({ where: { userId } });
-            if (winner) return res.json({ success: true, data: { code: winner.code } });
-          }
-          // Otherwise a code collision occurred; retry with a freshly generated code.
-          continue;
-        }
-        throw e;
-      }
-    }
-
-    return res.status(500).json({ success: false, message: "Failed to generate referral code" });
+    const referralCode = await getOrCreateReferralCode(req.auth!.userId);
+    res.json({ success: true, data: { code: referralCode.code } });
   } catch (e) {
     next(e);
   }
@@ -61,7 +62,7 @@ router.get("/summary", async (req, res, next) => {
     const userId = req.auth!.userId;
 
     const [referralCode, referralCounts, rewardTotals] = await Promise.all([
-      prisma.referralCode.findUnique({ where: { userId } }),
+      getOrCreateReferralCode(userId),
       prisma.referral.groupBy({
         by: ["status"],
         where: { referrerId: userId },
@@ -84,7 +85,7 @@ router.get("/summary", async (req, res, next) => {
     res.json({
       success: true,
       data: {
-        code: referralCode?.code ?? null,
+        code: referralCode.code,
         totalReferrals,
         referralsByStatus,
         earnings: {

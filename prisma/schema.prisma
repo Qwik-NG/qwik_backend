@@ -149,6 +149,7 @@ model User {
   referralRewards   ReferralReward[] @relation("ReferralRewards")
   referralPayouts   ReferralPayout[] @relation("ReferralPayouts")
   referralPayoutsRecorded ReferralPayout[] @relation("ReferralPayoutsRecordedBy")
+  referralPayoutAccount ReferralPayoutAccount?
   resetToken      String?
   resetTokenExpAt DateTime?
   emailVerifiedAt DateTime?
@@ -167,6 +168,17 @@ model ReferralCode {
   code      String   @unique
   createdAt DateTime @default(now())
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model ReferralPayoutAccount {
+  id            String   @id @default(cuid())
+  userId        String   @unique
+  accountName   String
+  accountNumber String
+  bankName      String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 enum ReferralStatus {
