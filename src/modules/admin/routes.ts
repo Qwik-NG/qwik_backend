@@ -90,6 +90,20 @@ const adminVerificationsQuerySchema = z.object({
   to: z.string().trim().optional(),
 });
 
+const adminReferralsQuerySchema = z.object({
+  search: z.string().trim().optional(),
+  status: z.enum(["PENDING_VERIFICATION", "ACTIVE", "REVOKED"]).optional(),
+});
+
+const referralRevokeSchema = z.object({
+  reason: z.string().trim().min(3).max(500),
+});
+
+const referralPayoutMarkPaidSchema = z.object({
+  payoutReference: z.string().trim().min(1).max(200),
+  notes: z.string().trim().max(1000).optional(),
+});
+
 const safeAdminUserSelect = {
   id: true,
   email: true,
@@ -1881,6 +1895,175 @@ router.get("/communications/campaigns/:id", async (req: Request, res: Response) 
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to fetch campaign details";
     res.status(500).json({ success: false, message });
+  }
+});
+
+router.get("/referrals", async (req: Request, res: Response) => {
+  try {
+    const { page, pageSize, skip } = getPage(req);
+    const query = parseOrThrow(adminReferralsQuerySchema, req.query);
+
+    const where: Prisma.ReferralWhereInput = {};
+    if (query.status) where.status = query.status;
+
+    const search = query.search?.toLowerCase();
+    if (search) {
+      where.OR = [
+        {
+          referrer: {
+            is: {
+              OR: [
+                { fullName: { contains: search, mode: "insensitive" } },
+                { email: { contains: search, mode: "insensitive" } },
+              ],
+            },
+          },
+        },
+        {
+          referredUser: {
+            is: {
+              OR: [
+                { fullName: { contains: search, mode: "insensitive" } },
+                { email: { contains: search, mode: "insensitive" } },
+              ],
+            },
+          },
+        },
+      ];
+    }
+
+    const [referrals, total] = await prisma.$transaction([
+      prisma.referral.findMany({
+        where,
+        include: {
+          referrer: { select: { id: true, fullName: true, email: true, status: true } },
+          referredUser: { select: { id: true, fullName: true, email: true, status: true } },
+          rewards: { select: { id: true, rewardAmount: true, status: true } },
+        },
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: pageSize,
+      }),
+      prisma.referral.count({ where }),
+    ]);
+
+    res.json({ success: true, data: referrals, meta: { page, pageSize, total } });
+  } catch {
+    res.status(500).json({ success: false, message: "Failed to fetch referrals" });
+  }
+});
+
+router.patch("/referrals/:id/revoke", async (req: Request, res: Response) => {
+  try {
+    const id = String(req.params.id);
+    const body = parseOrThrow(referralRevokeSchema, req.body);
+
+    const existing = await prisma.referral.findUnique({ where: { id }, select: { id: true, status: true } });
+    if (!existing) return notFound(res, "Referral not found");
+    if (existing.status === "REVOKED") {
+      return res.status(409).json({ success: false, message: "Referral is already revoked" });
+    }
+
+    const referral = await prisma.referral.update({
+      where: { id },
+      data: { status: "REVOKED", revokedAt: new Date(), revokedReason: body.reason },
+      include: {
+        referrer: { select: { id: true, fullName: true, email: true } },
+        referredUser: { select: { id: true, fullName: true, email: true } },
+      },
+    });
+
+    await auditAdminAction(req, "REFERRAL_REVOKED", "Referral", id, {
+      previousStatus: existing.status,
+      reason: body.reason,
+    });
+
+    res.json({ success: true, data: referral, message: "Referral revoked" });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to revoke referral";
+    res.status(message.includes("Invalid") ? 400 : 500).json({ success: false, message });
+  }
+});
+
+router.get("/referral-cycles", async (req: Request, res: Response) => {
+  try {
+    const { page, pageSize, skip } = getPage(req);
+
+    const [cycles, total] = await prisma.$transaction([
+      prisma.referralSettlementCycle.findMany({
+        include: {
+          payouts: {
+            include: {
+              referrer: { select: { id: true, fullName: true, email: true, status: true } },
+              paidByAdmin: { select: { id: true, fullName: true, email: true } },
+            },
+            orderBy: { createdAt: "desc" },
+          },
+        },
+        orderBy: { periodStart: "desc" },
+        skip,
+        take: pageSize,
+      }),
+      prisma.referralSettlementCycle.count(),
+    ]);
+
+    res.json({ success: true, data: cycles, meta: { page, pageSize, total } });
+  } catch {
+    res.status(500).json({ success: false, message: "Failed to fetch settlement cycles" });
+  }
+});
+
+router.patch("/referral-payouts/:id", async (req: Request, res: Response) => {
+  try {
+    const id = String(req.params.id);
+    const body = parseOrThrow(referralPayoutMarkPaidSchema, req.body);
+
+    const existing = await prisma.referralPayout.findUnique({ where: { id }, select: { id: true, status: true } });
+    if (!existing) return notFound(res, "Payout not found");
+    if (existing.status === "PAID") {
+      return res.status(409).json({ success: false, message: "Payout is already recorded as paid" });
+    }
+
+    const now = new Date();
+    const [payoutClaim] = await prisma.$transaction([
+      prisma.referralPayout.updateMany({
+        where: { id, status: "PENDING" },
+        data: {
+          status: "PAID",
+          paidAt: now,
+          paidByAdminId: req.auth!.userId,
+          payoutReference: body.payoutReference,
+          notes: body.notes ?? null,
+        },
+      }),
+      prisma.referralReward.updateMany({
+        where: { payoutId: id, status: "SETTLED" },
+        data: { status: "PAID" },
+      }),
+    ]);
+
+    if (payoutClaim.count === 0) {
+      return res.status(409).json({ success: false, message: "Payout is already recorded as paid" });
+    }
+
+    const payout = await prisma.referralPayout.findUnique({
+      where: { id },
+      include: {
+        referrer: { select: { id: true, fullName: true, email: true } },
+        paidByAdmin: { select: { id: true, fullName: true, email: true } },
+      },
+    });
+
+    await auditAdminAction(req, "REFERRAL_PAYOUT_RECORDED", "ReferralPayout", id, {
+      payoutReference: body.payoutReference,
+      notes: body.notes ?? null,
+      totalAmount: payout?.totalAmount,
+    });
+
+    res.json({ success: true, data: payout, message: "Payout recorded as paid" });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to record payout";
+    res.status(message.includes("Invalid") ? 400 : 500).json({ success: false, message });
   }
 });
 
