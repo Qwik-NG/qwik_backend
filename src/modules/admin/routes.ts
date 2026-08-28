@@ -2013,6 +2013,25 @@ router.get("/referral-cycles", async (req: Request, res: Response) => {
   }
 });
 
+router.get("/referral-payouts/:id/payout-account", async (req: Request, res: Response) => {
+  try {
+    const id = String(req.params.id);
+    const payout = await prisma.referralPayout.findUnique({ where: { id }, select: { id: true, referrerId: true } });
+    if (!payout) return notFound(res, "Payout not found");
+
+    const account = await prisma.referralPayoutAccount.findUnique({
+      where: { userId: payout.referrerId },
+      select: { accountName: true, accountNumber: true, bankName: true, updatedAt: true },
+    });
+
+    await auditAdminAction(req, "REFERRAL_PAYOUT_ACCOUNT_VIEWED", "ReferralPayout", id);
+
+    res.json({ success: true, data: account });
+  } catch {
+    res.status(500).json({ success: false, message: "Failed to fetch payout account" });
+  }
+});
+
 router.patch("/referral-payouts/:id", async (req: Request, res: Response) => {
   try {
     const id = String(req.params.id);
