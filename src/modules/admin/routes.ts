@@ -1948,8 +1948,9 @@ router.get("/referrals", async (req: Request, res: Response) => {
     ]);
 
     res.json({ success: true, data: referrals, meta: { page, pageSize, total } });
-  } catch {
-    res.status(500).json({ success: false, message: "Failed to fetch referrals" });
+  } catch (error) {
+    const status = error instanceof Error && (error as { status?: number }).status === 400 ? 400 : 500;
+    res.status(status).json({ success: false, message: status === 400 ? (error as Error).message : "Failed to fetch referrals" });
   }
 });
 
@@ -1958,30 +1959,32 @@ router.patch("/referrals/:id/revoke", async (req: Request, res: Response) => {
     const id = String(req.params.id);
     const body = parseOrThrow(referralRevokeSchema, req.body);
 
-    const existing = await prisma.referral.findUnique({ where: { id }, select: { id: true, status: true } });
-    if (!existing) return notFound(res, "Referral not found");
-    if (existing.status === "REVOKED") {
+    const updateResult = await prisma.referral.updateMany({
+      where: { id, status: { not: "REVOKED" } },
+      data: { status: "REVOKED", revokedAt: new Date(), revokedReason: body.reason },
+    });
+
+    if (updateResult.count === 0) {
+      const existing = await prisma.referral.findUnique({ where: { id }, select: { id: true } });
+      if (!existing) return notFound(res, "Referral not found");
       return res.status(409).json({ success: false, message: "Referral is already revoked" });
     }
 
-    const referral = await prisma.referral.update({
+    const referral = await prisma.referral.findUnique({
       where: { id },
-      data: { status: "REVOKED", revokedAt: new Date(), revokedReason: body.reason },
       include: {
         referrer: { select: { id: true, fullName: true, email: true } },
         referredUser: { select: { id: true, fullName: true, email: true } },
       },
     });
 
-    await auditAdminAction(req, "REFERRAL_REVOKED", "Referral", id, {
-      previousStatus: existing.status,
-      reason: body.reason,
-    });
+    await auditAdminAction(req, "REFERRAL_REVOKED", "Referral", id, { reason: body.reason });
 
     res.json({ success: true, data: referral, message: "Referral revoked" });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to revoke referral";
-    res.status(message.includes("Invalid") ? 400 : 500).json({ success: false, message });
+    const status = error instanceof Error && (error as { status?: number }).status === 400 ? 400 : (message.includes("Invalid") ? 400 : 500);
+    res.status(status).json({ success: false, message });
   }
 });
 
@@ -2008,8 +2011,9 @@ router.get("/referral-cycles", async (req: Request, res: Response) => {
     ]);
 
     res.json({ success: true, data: cycles, meta: { page, pageSize, total } });
-  } catch {
-    res.status(500).json({ success: false, message: "Failed to fetch settlement cycles" });
+  } catch (error) {
+    const status = error instanceof Error && (error as { status?: number }).status === 400 ? 400 : 500;
+    res.status(status).json({ success: false, message: status === 400 ? (error as Error).message : "Failed to fetch settlement cycles" });
   }
 });
 
@@ -2082,7 +2086,8 @@ router.patch("/referral-payouts/:id", async (req: Request, res: Response) => {
     res.json({ success: true, data: payout, message: "Payout recorded as paid" });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to record payout";
-    res.status(message.includes("Invalid") ? 400 : 500).json({ success: false, message });
+    const status = error instanceof Error && (error as { status?: number }).status === 400 ? 400 : (message.includes("Invalid") ? 400 : 500);
+    res.status(status).json({ success: false, message });
   }
 });
 
