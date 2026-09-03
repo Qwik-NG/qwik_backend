@@ -62,6 +62,69 @@ function getRequestUserAgent(req: { headers: Record<string, unknown> }) {
   return "unknown";
 }
 
+class SelfReferralError extends Error {
+  status = 400;
+
+  constructor() {
+    super("You cannot use your own referral code");
+  }
+}
+
+type ReferralSignupUser = {
+  id: string;
+  email: string;
+  passwordHash?: string | null;
+  fullName: string;
+  phone?: string | null;
+  location?: string | null;
+  googleId?: string | null;
+  authProvider?: string | null;
+  termsAcceptedAt: Date;
+  privacyAcceptedAt: Date;
+  termsVersion: string;
+  privacyVersion: string;
+  emailVerifiedAt?: Date | null;
+  avatarUrl?: string | null;
+};
+
+async function createReferralSignupUser(input: ReferralSignupUser, referralCode: string, signupIp: string, signupUserAgent: string) {
+  const code = referralCode.trim().toUpperCase();
+  const selfReferral = await prisma.referralCode.findFirst({
+    where: { code, userId: input.id },
+    select: { id: true },
+  });
+  if (selfReferral) throw new SelfReferralError();
+
+  const profileId = crypto.randomUUID();
+  const referralId = crypto.randomUUID();
+
+  await prisma.$transaction([
+    prisma.$executeRaw(Prisma.sql`
+      WITH new_user AS (
+        INSERT INTO "User" (
+          "id", "email", "passwordHash", "fullName", "phone", "location", "googleId", "authProvider",
+          "termsAcceptedAt", "privacyAcceptedAt", "termsVersion", "privacyVersion", "emailVerifiedAt", "updatedAt"
+        ) VALUES (
+          ${input.id}, ${input.email}, ${input.passwordHash ?? null}, ${input.fullName}, ${input.phone ?? null}, ${input.location ?? null}, ${input.googleId ?? null}, ${input.authProvider ?? null},
+          ${input.termsAcceptedAt}, ${input.privacyAcceptedAt}, ${input.termsVersion}, ${input.privacyVersion}, ${input.emailVerifiedAt ?? null}, NOW()
+        )
+        RETURNING "id"
+      ),
+      new_profile AS (
+        INSERT INTO "UserProfile" ("id", "userId", "avatarUrl", "updatedAt")
+        SELECT ${profileId}, "id", ${input.avatarUrl ?? null}, NOW()
+        FROM new_user
+      )
+      INSERT INTO "Referral" ("id", "referrerId", "referredUserId", "code", "signupIp", "signupUserAgent")
+      SELECT ${referralId}, referral_code."userId", new_user."id", ${code}, ${signupIp}, ${signupUserAgent}
+      FROM new_user
+      CROSS JOIN "ReferralCode" AS referral_code
+      WHERE referral_code."code" = ${code}
+        AND referral_code."userId" <> new_user."id"
+    `),
+  ]);
+}
+
 let cachedFallbackAdminId: string | null | undefined;
 
 async function getFallbackAdminId() {
@@ -203,25 +266,41 @@ router.post("/register", async (req, res, next) => {
       privacyAccepted: z.unknown().refine((value) => value === true, "Privacy Policy must be accepted"),
       termsVersion: z.string().optional(),
       privacyVersion: z.string().optional(),
+      referralCode: z.string().trim().max(128).optional(),
     }), req.body);
     if (await prisma.user.findUnique({ where: { email: b.email.toLowerCase() } })) return res.status(409).json({ success: false, message: "Email already in use" });
     const acceptedAt = new Date();
-    const user = await prisma.user.create({
+    const signupIp = getRequestIp(req);
+    const signupUserAgent = getRequestUserAgent(req);
+    const passwordHash = await bcrypt.hash(b.password, 12);
+    const userId = crypto.randomUUID();
+    const userData = {
+      id: userId,
+      email: b.email.toLowerCase(),
+      passwordHash,
+      fullName: b.fullName,
+      phone: b.phone,
+      location: b.location,
+      termsAcceptedAt: acceptedAt,
+      privacyAcceptedAt: acceptedAt,
+      termsVersion: TERMS_VERSION,
+      privacyVersion: PRIVACY_VERSION,
+      emailVerifiedAt: null,
+    };
+    const createUser = prisma.user.create({
       data: {
-        email: b.email.toLowerCase(),
-        passwordHash: await bcrypt.hash(b.password, 12),
-        fullName: b.fullName,
-        phone: b.phone,
-        location: b.location,
-        termsAcceptedAt: acceptedAt,
-        privacyAcceptedAt: acceptedAt,
-        termsVersion: TERMS_VERSION,
-        privacyVersion: PRIVACY_VERSION,
-        emailVerifiedAt: null,
+        ...userData,
         profile: { create: {} },
       },
       select: authUserSelect,
     });
+    let user;
+    if (b.referralCode) {
+      await createReferralSignupUser(userData, b.referralCode, signupIp, signupUserAgent);
+      user = await prisma.user.findUniqueOrThrow({ where: { id: userId }, select: authUserSelect });
+    } else {
+      user = await createUser;
+    }
     const token = signAuthToken({ userId: user.id, email: user.email, role: user.role });
     res.status(201).json({ success: true, data: { token, user: toAuthUser(user) } });
     queueWelcomeEmail(user.email, user.fullName, user.id);
@@ -381,10 +460,11 @@ router.post("/google", async (req, res, next) => {
     if (!googleClient || !env.googleClientId) {
       return res.status(503).json({ success: false, message: "Google sign-in is not configured" });
     }
-    const { credential, termsAccepted, privacyAccepted } = parseOrThrow(z.object({
+    const { credential, termsAccepted, privacyAccepted, referralCode } = parseOrThrow(z.object({
       credential: z.string().min(20),
       termsAccepted: z.boolean().optional(),
       privacyAccepted: z.boolean().optional(),
+      referralCode: z.string().trim().max(128).optional(),
     }), req.body);
 
     let ticket;
@@ -443,21 +523,35 @@ router.post("/google", async (req, res, next) => {
       }
 
       const acceptedAt = new Date();
-      user = await prisma.user.create({
+      const signupIp = getRequestIp(req);
+      const signupUserAgent = getRequestUserAgent(req);
+      const userId = crypto.randomUUID();
+      const userData = {
+        id: userId,
+        email,
+        fullName,
+        googleId,
+        authProvider: "GOOGLE",
+        termsAcceptedAt: acceptedAt,
+        privacyAcceptedAt: acceptedAt,
+        termsVersion: TERMS_VERSION,
+        privacyVersion: PRIVACY_VERSION,
+        emailVerifiedAt: acceptedAt,
+        avatarUrl,
+      };
+      const createUser = prisma.user.create({
         data: {
-          email,
-          fullName,
-          googleId,
-          authProvider: "GOOGLE",
-          termsAcceptedAt: acceptedAt,
-          privacyAcceptedAt: acceptedAt,
-          termsVersion: TERMS_VERSION,
-          privacyVersion: PRIVACY_VERSION,
-          emailVerifiedAt: acceptedAt,
+          ...userData,
           profile: { create: avatarUrl ? { avatarUrl } : {} },
         },
         select: { ...authUserSelect, id: true, googleId: true },
       });
+      if (referralCode) {
+        await createReferralSignupUser(userData, referralCode, signupIp, signupUserAgent);
+        user = await prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { ...authUserSelect, id: true, googleId: true } });
+      } else {
+        user = await createUser;
+      }
       createdUser = true;
     }
 

@@ -20,14 +20,14 @@ WHERE c3."slug" = 'trucks-buses'
   AND c3."parentId" IS NULL;
 
 -- Insert missing subcategories
-INSERT INTO "Category" ("name", "slug", "parentId", "createdAt")
-SELECT 'Cars', 'cars', "id", CURRENT_TIMESTAMP FROM "Category" WHERE "slug" = 'vehicles' AND "parentId" IS NULL
+INSERT INTO "Category" ("id", "name", "slug", "parentId", "createdAt")
+SELECT gen_random_uuid()::text, 'Cars', 'cars', "id", CURRENT_TIMESTAMP FROM "Category" WHERE "slug" = 'vehicles' AND "parentId" IS NULL
 ON CONFLICT ("slug") DO NOTHING;
 
-INSERT INTO "Category" ("name", "slug", "parentId", "createdAt")
-SELECT 'Motorcycles', 'motorcycles', "id", CURRENT_TIMESTAMP FROM "Category" WHERE "slug" = 'vehicles' AND "parentId" IS NULL
+INSERT INTO "Category" ("id", "name", "slug", "parentId", "createdAt")
+SELECT gen_random_uuid()::text, 'Motorcycles', 'motorcycles', "id", CURRENT_TIMESTAMP FROM "Category" WHERE "slug" = 'vehicles' AND "parentId" IS NULL
 ON CONFLICT ("slug") DO NOTHING;
 
-INSERT INTO "Category" ("name", "slug", "parentId", "createdAt")
-SELECT 'Trucks & Buses', 'trucks-buses', "id", CURRENT_TIMESTAMP FROM "Category" WHERE "slug" = 'vehicles' AND "parentId" IS NULL
+INSERT INTO "Category" ("id", "name", "slug", "parentId", "createdAt")
+SELECT gen_random_uuid()::text, 'Trucks & Buses', 'trucks-buses', "id", CURRENT_TIMESTAMP FROM "Category" WHERE "slug" = 'vehicles' AND "parentId" IS NULL
 ON CONFLICT ("slug") DO NOTHING;

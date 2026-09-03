@@ -88,6 +88,25 @@ const notificationSettingsSchema = z.object({
   offerNotifications: z.boolean().optional(),
   systemNotifications: z.boolean().optional(),
 });
+const payoutAccountSchema = z.object({
+  accountName: z.string().trim().min(2).max(200),
+  accountNumber: z.string().trim().regex(/^[0-9]{6,20}$/, "Account number must be 6-20 digits"),
+  bankName: z.string().trim().min(2).max(100),
+});
+
+function maskAccountNumber(accountNumber: string) {
+  if (accountNumber.length <= 4) return "*".repeat(accountNumber.length);
+  return "*".repeat(accountNumber.length - 4) + accountNumber.slice(-4);
+}
+function toPayoutAccountView(account: { accountName: string; accountNumber: string; bankName: string; updatedAt: Date } | null) {
+  if (!account) return null;
+  return {
+    accountName: account.accountName,
+    accountNumberMasked: maskAccountNumber(account.accountNumber),
+    bankName: account.bankName,
+    updatedAt: account.updatedAt,
+  };
+}
 
 function viewerIdFromAuthorization(header?: string) {
   if (!header?.startsWith("Bearer ")) return undefined;
@@ -155,6 +174,23 @@ router.patch("/me/notification-settings", requireAuth, async (req, res, next) =>
       update: b,
     });
     res.json({ success: true, data: settings });
+  } catch (e) { next(e); }
+});
+router.get("/me/payout-account", requireAuth, async (req, res, next) => {
+  try {
+    const account = await prisma.referralPayoutAccount.findUnique({ where: { userId: req.auth!.userId } });
+    res.json({ success: true, data: toPayoutAccountView(account) });
+  } catch (e) { next(e); }
+});
+router.patch("/me/payout-account", requireAuth, async (req, res, next) => {
+  try {
+    const b = parseOrThrow(payoutAccountSchema, req.body);
+    const account = await prisma.referralPayoutAccount.upsert({
+      where: { userId: req.auth!.userId },
+      create: { userId: req.auth!.userId, ...b },
+      update: b,
+    });
+    res.json({ success: true, data: toPayoutAccountView(account) });
   } catch (e) { next(e); }
 });
 router.post("/:sellerId/follow", requireAuth, async (req, res, next) => {

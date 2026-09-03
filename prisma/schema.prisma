@@ -143,6 +143,13 @@ model User {
   followers       Follow[] @relation("UserFollowers")
   sellerMetricEvents AdMetricEvent[] @relation("SellerMetricEvents")
   viewerMetricEvents AdMetricEvent[] @relation("ViewerMetricEvents")
+  referralCode    ReferralCode?
+  referralsMade     Referral[] @relation("ReferralsMade")
+  referralReceived  Referral?  @relation("ReferralReceived")
+  referralRewards   ReferralReward[] @relation("ReferralRewards")
+  referralPayouts   ReferralPayout[] @relation("ReferralPayouts")
+  referralPayoutsRecorded ReferralPayout[] @relation("ReferralPayoutsRecordedBy")
+  referralPayoutAccount ReferralPayoutAccount?
   resetToken      String?
   resetTokenExpAt DateTime?
   emailVerifiedAt DateTime?
@@ -153,6 +160,132 @@ model User {
   emailVerificationOtpLockedUntil DateTime?
 
   @@index([locationState])
+}
+
+model ReferralCode {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  code      String   @unique
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model ReferralPayoutAccount {
+  id            String   @id @default(cuid())
+  userId        String   @unique
+  accountName   String
+  accountNumber String
+  bankName      String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+enum ReferralStatus {
+  PENDING_VERIFICATION
+  ACTIVE
+  REVOKED
+}
+
+enum ReferralRewardStatus {
+  PENDING
+  SETTLED
+  PAID
+  REVERSED
+}
+
+enum ReferralSettlementCycleStatus {
+  OPEN
+  PROCESSING
+  CLOSED
+}
+
+enum ReferralPayoutStatus {
+  PENDING
+  PAID
+  FAILED
+}
+
+model Referral {
+  id              String         @id @default(cuid())
+  referrerId      String
+  referredUserId  String         @unique
+  code            String
+  status          ReferralStatus @default(PENDING_VERIFICATION)
+  signupIp        String?
+  signupUserAgent String?
+  activatedAt     DateTime?
+  revokedAt       DateTime?
+  revokedReason   String?
+  createdAt       DateTime       @default(now())
+  referrer        User           @relation("ReferralsMade", fields: [referrerId], references: [id], onDelete: Cascade)
+  referredUser    User           @relation("ReferralReceived", fields: [referredUserId], references: [id], onDelete: Cascade)
+  rewards         ReferralReward[]
+
+  @@index([referrerId])
+}
+
+model ReferralReward {
+  id               String               @id @default(cuid())
+  referralId       String
+  paymentId        String               @unique
+  referrerId       String
+  qualifyingAmount Int
+  rewardPercent    Float
+  rewardAmount     Int
+  status           ReferralRewardStatus @default(PENDING)
+  cycleId          String?
+  payoutId         String?
+  reversedAt       DateTime?
+  reversalReason   String?
+  correctionOfId   String?
+  createdAt        DateTime             @default(now())
+  referral         Referral             @relation(fields: [referralId], references: [id], onDelete: Cascade)
+  payment          PaymentTransaction   @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  referrer         User                 @relation("ReferralRewards", fields: [referrerId], references: [id], onDelete: Cascade)
+  correctionOf     ReferralReward?      @relation("ReferralRewardCorrections", fields: [correctionOfId], references: [id], onDelete: SetNull)
+  corrections      ReferralReward[]     @relation("ReferralRewardCorrections")
+  cycle            ReferralSettlementCycle? @relation(fields: [cycleId], references: [id], onDelete: SetNull)
+  payout           ReferralPayout?      @relation(fields: [payoutId], references: [id], onDelete: SetNull)
+
+  @@index([referralId])
+  @@index([referrerId, status])
+}
+
+model ReferralSettlementCycle {
+  id          String                         @id @default(cuid())
+  periodStart DateTime
+  periodEnd   DateTime
+  status      ReferralSettlementCycleStatus  @default(OPEN)
+  lockedAt    DateTime?
+  lockedBy    String?
+  createdAt   DateTime                       @default(now())
+  updatedAt   DateTime                       @updatedAt
+  rewards     ReferralReward[]
+  payouts     ReferralPayout[]
+
+  @@unique([periodStart, periodEnd])
+}
+
+model ReferralPayout {
+  id              String               @id @default(cuid())
+  cycleId         String
+  referrerId      String
+  totalAmount     Int
+  status          ReferralPayoutStatus @default(PENDING)
+  paidAt          DateTime?
+  paidByAdminId   String?
+  payoutReference String?
+  notes           String?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+  cycle           ReferralSettlementCycle @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+  referrer        User                 @relation("ReferralPayouts", fields: [referrerId], references: [id], onDelete: Cascade)
+  paidByAdmin     User?                @relation("ReferralPayoutsRecordedBy", fields: [paidByAdminId], references: [id], onDelete: SetNull)
+  rewards         ReferralReward[]
+
+  @@unique([cycleId, referrerId])
+  @@index([referrerId, status])
 }
 
 model AdminAuditLog {
@@ -398,6 +531,7 @@ model PaymentTransaction {
   user           User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
   verification   VerificationApplication? @relation(fields: [verificationId], references: [id], onDelete: SetNull)
   ad             Ad?                      @relation(fields: [adId], references: [id], onDelete: SetNull)
+  referralReward ReferralReward?
 
   @@index([userId])
   @@index([verificationId])

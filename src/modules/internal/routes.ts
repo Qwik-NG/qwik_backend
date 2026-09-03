@@ -3,6 +3,7 @@ import { z } from "zod";
 import { env } from "../../config/env";
 import { processPendingEmailOutboxJobs } from "../../lib/engagementWorker";
 import { enqueueAdPerformanceReports } from "../../lib/adPerformanceReports";
+import { runMonthlySettlement } from "../referrals/settlement";
 import { parseOrThrow } from "../../utils/validation";
 
 const router = Router();
@@ -15,6 +16,14 @@ const enqueueAdPerformanceReportsSchema = z.object({
   periodStart: z.string().datetime().optional(),
   periodEnd: z.string().datetime().optional(),
   sellerIds: z.array(z.string().min(1)).max(500).optional(),
+}).refine((value) => Boolean(value.periodStart) === Boolean(value.periodEnd), {
+  message: "periodStart and periodEnd must be provided together",
+  path: ["periodEnd"],
+});
+
+const runMonthlySettlementSchema = z.object({
+  periodStart: z.string().datetime().optional(),
+  periodEnd: z.string().datetime().optional(),
 }).refine((value) => Boolean(value.periodStart) === Boolean(value.periodEnd), {
   message: "periodStart and periodEnd must be provided together",
   path: ["periodEnd"],
@@ -111,6 +120,29 @@ router.post("/engagement/enqueue-ad-performance-reports", async (req, res, next)
       },
       message: "Ad performance report jobs enqueued",
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/referrals/run-monthly-settlement", async (req, res, next) => {
+  try {
+    if (!isInternalAuthorized(req.headers as Record<string, unknown>)) {
+      return res.status(401).json({ success: false, message: "Unauthorized" });
+    }
+
+    const body = parseOrThrow(runMonthlySettlementSchema, req.body ?? {});
+    const periodStart = body.periodStart ? new Date(body.periodStart) : undefined;
+    const periodEnd = body.periodEnd ? new Date(body.periodEnd) : undefined;
+
+    if (periodStart && periodEnd && !(periodStart < periodEnd)) {
+      return res.status(400).json({ success: false, message: "periodStart must be earlier than periodEnd" });
+    }
+
+    const workerId = `internal-endpoint:${Date.now()}`;
+    const summary = await runMonthlySettlement({ periodStart, periodEnd, workerId });
+
+    return res.json({ success: true, data: summary, message: "Monthly settlement processed" });
   } catch (error) {
     next(error);
   }
