@@ -21,13 +21,13 @@ function generateReferralCode() {
 }
 
 // Race-safe find-or-create, shared by every endpoint that needs the caller's referral code.
-async function getOrCreateReferralCode(userId: string) {
-  const existing = await prisma.referralCode.findUnique({ where: { userId } });
+export async function getOrCreateReferralCode(userId: string, prismaClient = prisma) {
+  const existing = await prismaClient.referralCode.findUnique({ where: { userId } });
   if (existing) return existing;
 
   for (let attempt = 0; attempt < MAX_CREATE_ATTEMPTS; attempt += 1) {
     try {
-      return await prisma.referralCode.create({
+      return await prismaClient.referralCode.create({
         data: { userId, code: generateReferralCode() },
       });
     } catch (e) {
@@ -35,7 +35,7 @@ async function getOrCreateReferralCode(userId: string) {
         const target = (e.meta?.target as string[] | undefined) ?? [];
         if (target.includes("userId")) {
           // Another concurrent request already created this user's code first.
-          const winner = await prisma.referralCode.findUnique({ where: { userId } });
+          const winner = await prismaClient.referralCode.findUnique({ where: { userId } });
           if (winner) return winner;
         }
         // Otherwise a code collision occurred; retry with a freshly generated code.
@@ -46,6 +46,69 @@ async function getOrCreateReferralCode(userId: string) {
   }
 
   throw Object.assign(new Error("Failed to generate referral code"), { status: 500 });
+}
+
+export interface ReferralEarningsSummary {
+  total: number;
+  pending: number;
+  settled: number;
+  paid: number;
+  reversed: number;
+}
+
+export function calculateReferralEarnings(
+  rewardTotals: Array<{ status: string; _sum: { rewardAmount: number | null } }>
+): ReferralEarningsSummary {
+  const earningsByStatus: Record<string, number> = { PENDING: 0, SETTLED: 0, PAID: 0, REVERSED: 0 };
+  for (const row of rewardTotals) {
+    if (row.status in earningsByStatus) {
+      earningsByStatus[row.status] = row._sum.rewardAmount ?? 0;
+    }
+  }
+
+  // Total Earnings = PENDING + SETTLED + PAID (excludes REVERSED)
+  const total = earningsByStatus.PENDING + earningsByStatus.SETTLED + earningsByStatus.PAID;
+
+  return {
+    total,
+    pending: earningsByStatus.PENDING,
+    settled: earningsByStatus.SETTLED,
+    paid: earningsByStatus.PAID,
+    reversed: earningsByStatus.REVERSED,
+  };
+}
+
+export async function getReferralSummary(userId: string, prismaClient = prisma) {
+  const [referralCode, referralCounts, rewardTotals] = await Promise.all([
+    getOrCreateReferralCode(userId, prismaClient),
+    prismaClient.referral.groupBy({
+      by: ["status"],
+      where: { referrerId: userId },
+      _count: { _all: true },
+    }),
+    prismaClient.referralReward.groupBy({
+      by: ["status"],
+      where: { referrerId: userId },
+      _sum: { rewardAmount: true },
+    }),
+  ]);
+
+  const referralsByStatus: Record<string, number> = { PENDING_VERIFICATION: 0, ACTIVE: 0, REVOKED: 0 };
+  for (const row of referralCounts) {
+    if (row.status in referralsByStatus) {
+      referralsByStatus[row.status] = row._count._all;
+    }
+  }
+  const totalReferrals = referralCounts.reduce((sum, row) => sum + row._count._all, 0);
+
+  const earnings = calculateReferralEarnings(rewardTotals);
+
+  return {
+    code: referralCode.code,
+    totalReferrals,
+    referralsByStatus,
+    earnings,
+  };
 }
 
 router.get("/me", async (req, res, next) => {
@@ -59,42 +122,10 @@ router.get("/me", async (req, res, next) => {
 
 router.get("/summary", async (req, res, next) => {
   try {
-    const userId = req.auth!.userId;
-
-    const [referralCode, referralCounts, rewardTotals] = await Promise.all([
-      getOrCreateReferralCode(userId),
-      prisma.referral.groupBy({
-        by: ["status"],
-        where: { referrerId: userId },
-        _count: { _all: true },
-      }),
-      prisma.referralReward.groupBy({
-        by: ["status"],
-        where: { referrerId: userId },
-        _sum: { rewardAmount: true },
-      }),
-    ]);
-
-    const referralsByStatus: Record<string, number> = { PENDING_VERIFICATION: 0, ACTIVE: 0, REVOKED: 0 };
-    for (const row of referralCounts) referralsByStatus[row.status] = row._count._all;
-    const totalReferrals = referralCounts.reduce((sum, row) => sum + row._count._all, 0);
-
-    const earningsByStatus: Record<string, number> = { PENDING: 0, SETTLED: 0, PAID: 0, REVERSED: 0 };
-    for (const row of rewardTotals) earningsByStatus[row.status] = row._sum.rewardAmount ?? 0;
-
+    const summary = await getReferralSummary(req.auth!.userId);
     res.json({
       success: true,
-      data: {
-        code: referralCode.code,
-        totalReferrals,
-        referralsByStatus,
-        earnings: {
-          pending: earningsByStatus.PENDING,
-          settled: earningsByStatus.SETTLED,
-          paid: earningsByStatus.PAID,
-          reversed: earningsByStatus.REVERSED,
-        },
-      },
+      data: summary,
     });
   } catch (e) {
     next(e);
