@@ -62,7 +62,15 @@ function getRequestUserAgent(req: { headers: Record<string, unknown> }) {
   return "unknown";
 }
 
-class SelfReferralError extends Error {
+export class InvalidReferralCodeError extends Error {
+  status = 400;
+
+  constructor(message = "Invalid referral code") {
+    super(message);
+  }
+}
+
+export class SelfReferralError extends Error {
   status = 400;
 
   constructor() {
@@ -70,7 +78,7 @@ class SelfReferralError extends Error {
   }
 }
 
-type ReferralSignupUser = {
+export type ReferralSignupUser = {
   id: string;
   email: string;
   passwordHash?: string | null;
@@ -87,19 +95,61 @@ type ReferralSignupUser = {
   avatarUrl?: string | null;
 };
 
-async function createReferralSignupUser(input: ReferralSignupUser, referralCode: string, signupIp: string, signupUserAgent: string) {
+export async function createReferralSignupUser(
+  input: ReferralSignupUser,
+  referralCode: string,
+  signupIp: string,
+  signupUserAgent: string,
+  prismaClient = prisma
+) {
   const code = referralCode.trim().toUpperCase();
-  const selfReferral = await prisma.referralCode.findFirst({
-    where: { code, userId: input.id },
-    select: { id: true },
+  if (!code || !/^[A-Z0-9_-]{3,32}$/.test(code)) {
+    throw new InvalidReferralCodeError("Invalid referral code format");
+  }
+
+  const referrerRecord = await prismaClient.referralCode.findUnique({
+    where: { code },
+    include: {
+      user: {
+        select: {
+          id: true,
+          email: true,
+          phone: true,
+          status: true,
+        },
+      },
+    },
   });
-  if (selfReferral) throw new SelfReferralError();
+
+  if (!referrerRecord) {
+    throw new InvalidReferralCodeError("Invalid referral code");
+  }
+
+  if (referrerRecord.userId === input.id) {
+    throw new SelfReferralError();
+  }
+
+  if (referrerRecord.user.email.toLowerCase() === input.email.toLowerCase()) {
+    throw new SelfReferralError();
+  }
+
+  if (input.phone && referrerRecord.user.phone) {
+    const normInputPhone = input.phone.replace(/[\s-]/g, "");
+    const normReferrerPhone = referrerRecord.user.phone.replace(/[\s-]/g, "");
+    if (normInputPhone && normReferrerPhone && normInputPhone === normReferrerPhone) {
+      throw new SelfReferralError();
+    }
+  }
+
+  if (referrerRecord.user.status === "BANNED") {
+    throw new InvalidReferralCodeError("Invalid referral code");
+  }
 
   const profileId = crypto.randomUUID();
   const referralId = crypto.randomUUID();
 
-  await prisma.$transaction([
-    prisma.$executeRaw(Prisma.sql`
+  await prismaClient.$transaction([
+    prismaClient.$executeRaw(Prisma.sql`
       WITH new_user AS (
         INSERT INTO "User" (
           "id", "email", "passwordHash", "fullName", "phone", "location", "googleId", "authProvider",
@@ -294,9 +344,10 @@ router.post("/register", async (req, res, next) => {
       },
       select: authUserSelect,
     });
+    const rawReferralCode = typeof b.referralCode === "string" ? b.referralCode.trim() : "";
     let user;
-    if (b.referralCode) {
-      await createReferralSignupUser(userData, b.referralCode, signupIp, signupUserAgent);
+    if (rawReferralCode) {
+      await createReferralSignupUser(userData, rawReferralCode, signupIp, signupUserAgent);
       user = await prisma.user.findUniqueOrThrow({ where: { id: userId }, select: authUserSelect });
     } else {
       user = await createUser;
@@ -546,8 +597,9 @@ router.post("/google", async (req, res, next) => {
         },
         select: { ...authUserSelect, id: true, googleId: true },
       });
-      if (referralCode) {
-        await createReferralSignupUser(userData, referralCode, signupIp, signupUserAgent);
+      const rawReferralCode = typeof referralCode === "string" ? referralCode.trim() : "";
+      if (rawReferralCode) {
+        await createReferralSignupUser(userData, rawReferralCode, signupIp, signupUserAgent);
         user = await prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { ...authUserSelect, id: true, googleId: true } });
       } else {
         user = await createUser;
