@@ -13,6 +13,7 @@ import { requireAuth } from "../../middleware/auth";
 import { toAuthUser } from "../../utils/userResponse";
 import { env } from "../../config/env";
 import { generateOtp, hashOtp, verifyOtp, OTP_EXPIRY_MS, OTP_RESEND_COOLDOWN_MS, OTP_MAX_ATTEMPTS, OTP_LOCKOUT_MS } from "../../utils/otp";
+import { buildBrandedEmailHtml } from "../../lib/emailBranding";
 
 const router = Router();
 const TERMS_VERSION = "2026-06-09";
@@ -225,12 +226,13 @@ async function sendPasswordResetEmail(email: string, resetToken: string) {
   }
 
   const link = resetPasswordUrl(resetToken);
+  const resetContentHtml = `<p>Use this link to reset your Qwik.ng password:</p><p><a href="${link}">Reset password</a></p><p>This link expires in 30 minutes.</p>`;
   await resend.emails.send({
     from: env.resendFromEmail,
     to: email,
     subject: "Reset your Qwik.ng password",
     text: `Use this link to reset your Qwik.ng password: ${link}\n\nThis link expires in 30 minutes.`,
-    html: `<p>Use this link to reset your Qwik.ng password:</p><p><a href="${link}">Reset password</a></p><p>This link expires in 30 minutes.</p>`,
+    html: buildBrandedEmailHtml(resetContentHtml, "Reset your Qwik.ng password"),
   });
 }
 
@@ -241,13 +243,14 @@ async function sendVerificationOtpEmail(email: string, fullName: string, otp: st
   }
 
   const safeName = fullName.trim() || "there";
+  const otpContentHtml = `<p>Hi ${safeName},</p><p>Your Qwik.ng verification code is:</p><p style="font-size: 24px; font-weight: bold; letter-spacing: 2px; font-family: monospace;">${otp}</p><p>This code expires in 10 minutes.</p><p><strong>Do not share this code with anyone.</strong></p>`;
 
   const result = await resend.emails.send({
     from: env.resendFromEmail,
     to: email,
     subject: "Verify your Qwik.ng email",
     text: `Hi ${safeName},\n\nYour Qwik.ng verification code is: ${otp}\n\nThis code expires in 10 minutes.\n\nDo not share this code with anyone.`,
-    html: `<p>Hi ${safeName},</p><p>Your Qwik.ng verification code is:</p><p style="font-size: 24px; font-weight: bold; letter-spacing: 2px; font-family: monospace;">${otp}</p><p>This code expires in 10 minutes.</p><p><strong>Do not share this code with anyone.</strong></p>`,
+    html: buildBrandedEmailHtml(otpContentHtml, "Verify your Qwik.ng email"),
   });
 
   if (result.error) {
@@ -260,6 +263,20 @@ async function sendWelcomeEmail(email: string, fullName: string) {
     console.error("Welcome email skipped because Resend is not configured", { email });
     return;
   }
+
+  const welcomeContentHtml = `<p>Hi there,</p>
+
+<p>Welcome to Qwik.ng — Nigeria's trusted online marketplace.</p>
+
+<p>Your account has been successfully created, and you're now ready to buy, sell, and connect with thousands of users across the country.</p>
+
+<p>🚀 Start by posting your first ad or explore great deals near you.</p>
+
+<p>Thank you for choosing Qwik.ng. We're excited to have you in our growing community!</p>
+
+<p>Happy buying & selling!</p>
+
+<p>— The Qwik.ng Team</p>`;
 
   await resend.emails.send({
     from: env.resendFromEmail,
@@ -278,19 +295,7 @@ Thank you for choosing Qwik.ng. We're excited to have you in our growing communi
 Happy buying & selling!
 
 — The Qwik.ng Team`,
-    html: `<p>Hi there,</p>
-
-<p>Welcome to Qwik.ng — Nigeria's trusted online marketplace.</p>
-
-<p>Your account has been successfully created, and you're now ready to buy, sell, and connect with thousands of users across the country.</p>
-
-<p>🚀 Start by posting your first ad or explore great deals near you.</p>
-
-<p>Thank you for choosing Qwik.ng. We're excited to have you in our growing community!</p>
-
-<p>Happy buying & selling!</p>
-
-<p>— The Qwik.ng Team</p>`,
+    html: buildBrandedEmailHtml(welcomeContentHtml, "Welcome to Qwik.ng!"),
   });
 }
 
