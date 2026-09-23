@@ -9,6 +9,7 @@ import { getCached, setCached, getCacheKey, invalidateCache, CACHE_TTLS } from "
 import { env } from "../../config/env";
 import { fetchGa4TrafficMetrics } from "../../lib/ga4-reporting";
 import { attemptReferralRewardAccrual } from "../referrals/accrual";
+import { buildBrandedEmailHtml } from "../../lib/emailBranding";
 
 const resend = env.resendApiKey ? new Resend(env.resendApiKey) : null;
 
@@ -1472,32 +1473,17 @@ router.post("/communications/test-email", async (req: Request, res: Response) =>
       from: env.resendFromEmail,
       to: admin.email,
       subject: `[Test] ${safeSubject}`,
-      html: `
-<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#f3f3f5;font-family:sans-serif">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f3f3f5;padding:32px 0">
-    <tr><td align="center">
-      <table width="100%" style="max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e8e8ea">
-        <tr><td style="background:#ff9715;padding:20px 28px">
-          <span style="font-size:26px;font-weight:400;color:#ffffff;letter-spacing:-0.5px">qwik</span>
-          <span style="display:block;font-size:11px;color:rgba(255,255,255,0.8);margin-top:2px">Admin Panel — Communications</span>
-        </td></tr>
-        <tr><td style="padding:28px">
-          <p style="margin:0 0 8px;font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#9a99a6">Subject</p>
-          <p style="margin:0 0 20px;font-size:18px;font-weight:600;color:#1f1f29">${safeSubject}</p>
-          <p style="margin:0 0 8px;font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#9a99a6">Message</p>
-          <div style="background:#f8f8fa;border-radius:8px;padding:16px;font-size:15px;line-height:1.6;color:#3a3743;white-space:pre-wrap">${safeMessage}</div>
-        </td></tr>
-        <tr><td style="padding:16px 28px 24px;border-top:1px solid #f0f0f2">
+      html: buildBrandedEmailHtml(
+        `
+        <p style="margin:0 0 8px;font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#9a99a6">Subject</p>
+        <p style="margin:0 0 20px;font-size:18px;font-weight:600;color:#1f1f29">${safeSubject}</p>
+        <p style="margin:0 0 8px;font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#9a99a6">Message</p>
+        <div style="background:#f8f8fa;border-radius:8px;padding:16px;font-size:15px;line-height:1.6;color:#3a3743;white-space:pre-wrap">${safeMessage}</div>
+        <div style="margin-top:24px;padding-top:16px;border-top:1px solid #f0f0f2">
           <p style="margin:0;font-size:12px;color:#9a99a6">⚠️ This is a <strong>test admin communication</strong> sent only to <strong>${admin.email}</strong>. No users received this email.</p>
-        </td></tr>
-      </table>
-    </td></tr>
-  </table>
-</body>
-</html>`,
+        </div>`,
+        { preheader: `[Test] ${safeSubject}`, subtitle: "Admin Panel — Communications" }
+      ),
       text: `[TEST ADMIN COMMUNICATION]\n\nSubject: ${safeSubject}\n\n${body.message}\n\n---\nThis is a test admin communication sent only to ${admin.email}. No users received this email.`,
     });
 
@@ -1560,32 +1546,17 @@ router.post("/communications/send-user-email", async (req: Request, res: Respons
       from: env.resendFromEmail,
       to: selectedUser.email,
       subject: safeSubject,
-      html: `
-<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#f3f3f5;font-family:sans-serif">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f3f3f5;padding:32px 0">
-    <tr><td align="center">
-      <table width="100%" style="max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e8e8ea">
-        <tr><td style="background:#ff9715;padding:20px 28px">
-          <span style="font-size:26px;font-weight:400;color:#ffffff;letter-spacing:-0.5px">qwik</span>
-          <span style="display:block;font-size:11px;color:rgba(255,255,255,0.8);margin-top:2px">Admin Communication</span>
-        </td></tr>
-        <tr><td style="padding:28px">
-          <p style="margin:0 0 8px;font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#9a99a6">Subject</p>
-          <p style="margin:0 0 20px;font-size:18px;font-weight:600;color:#1f1f29">${safeSubject}</p>
-          <p style="margin:0 0 8px;font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#9a99a6">Message</p>
-          <div style="background:#f8f8fa;border-radius:8px;padding:16px;font-size:15px;line-height:1.6;color:#3a3743;white-space:pre-wrap">${safeMessage}</div>
-        </td></tr>
-        <tr><td style="padding:16px 28px 24px;border-top:1px solid #f0f0f2">
+      html: buildBrandedEmailHtml(
+        `
+        <p style="margin:0 0 8px;font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#9a99a6">Subject</p>
+        <p style="margin:0 0 20px;font-size:18px;font-weight:600;color:#1f1f29">${safeSubject}</p>
+        <p style="margin:0 0 8px;font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#9a99a6">Message</p>
+        <div style="background:#f8f8fa;border-radius:8px;padding:16px;font-size:15px;line-height:1.6;color:#3a3743;white-space:pre-wrap">${safeMessage}</div>
+        <div style="margin-top:24px;padding-top:16px;border-top:1px solid #f0f0f2">
           <p style="margin:0;font-size:12px;color:#9a99a6">This email was sent by Qwik.ng admin communications.</p>
-        </td></tr>
-      </table>
-    </td></tr>
-  </table>
-</body>
-</html>`,
+        </div>`,
+        { preheader: safeSubject, subtitle: "Admin Communication" }
+      ),
       text: `${body.subject}\n\n${body.message}`,
     });
 
@@ -1723,32 +1694,17 @@ router.post("/communications/send-selected-sellers-email", async (req: Request, 
         from: env.resendFromEmail,
         to: seller.email,
         subject: safeSubject,
-        html: `
-<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#f3f3f5;font-family:sans-serif">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f3f3f5;padding:32px 0">
-    <tr><td align="center">
-      <table width="100%" style="max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e8e8ea">
-        <tr><td style="background:#ff9715;padding:20px 28px">
-          <span style="font-size:26px;font-weight:400;color:#ffffff;letter-spacing:-0.5px">qwik</span>
-          <span style="display:block;font-size:11px;color:rgba(255,255,255,0.8);margin-top:2px">Admin Communication</span>
-        </td></tr>
-        <tr><td style="padding:28px">
+        html: buildBrandedEmailHtml(
+          `
           <p style="margin:0 0 8px;font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#9a99a6">Subject</p>
           <p style="margin:0 0 20px;font-size:18px;font-weight:600;color:#1f1f29">${safeSubject}</p>
           <p style="margin:0 0 8px;font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#9a99a6">Message</p>
           <div style="background:#f8f8fa;border-radius:8px;padding:16px;font-size:15px;line-height:1.6;color:#3a3743;white-space:pre-wrap">${safeMessage}</div>
-        </td></tr>
-        <tr><td style="padding:16px 28px 24px;border-top:1px solid #f0f0f2">
-          <p style="margin:0;font-size:12px;color:#9a99a6">This email was sent by Qwik.ng admin communications.</p>
-        </td></tr>
-      </table>
-    </td></tr>
-  </table>
-</body>
-</html>`,
+          <div style="margin-top:24px;padding-top:16px;border-top:1px solid #f0f0f2">
+            <p style="margin:0;font-size:12px;color:#9a99a6">This email was sent by Qwik.ng admin communications.</p>
+          </div>`,
+          { preheader: safeSubject, subtitle: "Admin Communication" }
+        ),
         text: `${body.subject}\n\n${body.message}`,
       });
 
