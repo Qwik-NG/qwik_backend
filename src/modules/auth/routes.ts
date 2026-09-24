@@ -96,6 +96,28 @@ export type ReferralSignupUser = {
   avatarUrl?: string | null;
 };
 
+export type GoogleSignupUser = {
+  id: string;
+  email: string;
+  fullName: string;
+  googleId: string;
+  authProvider: string;
+  termsAcceptedAt: Date;
+  privacyAcceptedAt: Date;
+  termsVersion: string;
+  privacyVersion: string;
+  emailVerifiedAt?: Date | null;
+  avatarUrl?: string | null;
+};
+
+export function buildGoogleUserCreateInput(userData: GoogleSignupUser) {
+  const { avatarUrl, ...userFields } = userData;
+  return {
+    ...userFields,
+    profile: { create: avatarUrl ? { avatarUrl } : {} },
+  };
+}
+
 export async function createReferralSignupUser(
   input: ReferralSignupUser,
   referralCode: string,
@@ -582,7 +604,7 @@ router.post("/google", async (req, res, next) => {
       const signupIp = getRequestIp(req);
       const signupUserAgent = getRequestUserAgent(req);
       const userId = crypto.randomUUID();
-      const userData = {
+      const userData: GoogleSignupUser = {
         id: userId,
         email,
         fullName,
@@ -595,19 +617,16 @@ router.post("/google", async (req, res, next) => {
         emailVerifiedAt: acceptedAt,
         avatarUrl,
       };
-      const createUser = prisma.user.create({
-        data: {
-          ...userData,
-          profile: { create: avatarUrl ? { avatarUrl } : {} },
-        },
-        select: { ...authUserSelect, id: true, googleId: true },
-      });
+
       const rawReferralCode = typeof referralCode === "string" ? referralCode.trim() : "";
       if (rawReferralCode) {
         await createReferralSignupUser(userData, rawReferralCode, signupIp, signupUserAgent);
         user = await prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { ...authUserSelect, id: true, googleId: true } });
       } else {
-        user = await createUser;
+        user = await prisma.user.create({
+          data: buildGoogleUserCreateInput(userData),
+          select: { ...authUserSelect, id: true, googleId: true },
+        });
       }
       createdUser = true;
     }
