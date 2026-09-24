@@ -25,10 +25,19 @@ export function errorHandler(
     }
   }
 
+  if (
+    err instanceof Prisma.PrismaClientValidationError ||
+    err.name === "PrismaClientValidationError"
+  ) {
+    return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+
   const isDatabaseError =
-    err.name.startsWith("Prisma") ||
-    err.message.includes("Can't reach database server") ||
-    err.message.includes("Invalid `prisma");
+    err.name !== "PrismaClientValidationError" &&
+    !(err instanceof Prisma.PrismaClientValidationError) &&
+    (err.name.startsWith("Prisma") ||
+      err.message.includes("Can't reach database server") ||
+      err.message.includes("Invalid `prisma"));
   const statusCode = err.status ?? (isDatabaseError ? 503 : 500);
   const isClientError = statusCode >= 400 && statusCode < 500;
 
