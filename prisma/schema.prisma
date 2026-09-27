@@ -58,6 +58,8 @@ enum PaymentStatus {
 
 enum EmailCampaignType {
   SELECTED_SELLERS
+  BULK_SELLERS
+  BULK_USERS
 }
 
 enum EmailCampaignStatus {
