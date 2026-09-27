@@ -1,5 +1,5 @@
 import { NextFunction, Request, Response, Router } from "express";
-import { Prisma } from "@prisma/client";
+import { Prisma, UserRole, UserStatus, AdStatus } from "@prisma/client";
 import { Resend } from "resend";
 import { z } from "zod";
 import { prisma } from "../../lib/prisma";
@@ -10,6 +10,14 @@ import { env } from "../../config/env";
 import { fetchGa4TrafficMetrics } from "../../lib/ga4-reporting";
 import { attemptReferralRewardAccrual } from "../referrals/accrual";
 import { buildBrandedEmailHtml } from "../../lib/emailBranding";
+import {
+  BULK_RECIPIENT_SEGMENTS,
+  BulkRecipientSegment,
+  getCampaignTypeForSegment,
+  getBulkRecipientWhereClause,
+  bulkRecipientSelect,
+} from "./bulkRecipients";
+import { executeBulkEmailBatch } from "./bulkEmailBatch";
 
 const resend = env.resendApiKey ? new Resend(env.resendApiKey) : null;
 
@@ -1440,6 +1448,61 @@ const sendSelectedSellersEmailSchema = z.object({
   message: z.string().trim().min(1, "Message is required").max(5000, "Message must be 5000 characters or fewer"),
 });
 
+const bulkRecipientCountQuerySchema = z.object({
+  segment: z.enum(BULK_RECIPIENT_SEGMENTS, {
+    message: "Invalid segment. Must be ACTIVE_SELLERS or ALL_ACTIVE_USERS",
+  }),
+});
+
+const sendBulkEmailSchema = z.object({
+  segment: z.enum(BULK_RECIPIENT_SEGMENTS, {
+    message: "Invalid segment. Must be ACTIVE_SELLERS or ALL_ACTIVE_USERS",
+  }),
+  subject: z
+    .string()
+    .trim()
+    .min(1, "Subject is required")
+    .max(120, "Subject must be 120 characters or fewer"),
+  message: z
+    .string()
+    .trim()
+    .min(1, "Message is required")
+    .max(5000, "Message must be 5000 characters or fewer"),
+});
+
+// Mutex & duplicate prevention state for bulk communications
+const activeBulkSendAdmins = new Set<string>();
+const recentBulkSubmissions = new Map<string, number>();
+const BULK_DUPLICATE_WINDOW_MS = 60_000;
+
+function isRecentDuplicateCampaign(adminId: string, segment: string, normalizedSubject: string): boolean {
+  const now = Date.now();
+  const key = `${adminId}:${segment}:${normalizedSubject.toLowerCase()}`;
+  const prevTime = recentBulkSubmissions.get(key);
+  if (prevTime && now - prevTime < BULK_DUPLICATE_WINDOW_MS) {
+    return true;
+  }
+  return false;
+}
+
+function recordBulkCampaignSubmission(adminId: string, segment: string, normalizedSubject: string): void {
+  const now = Date.now();
+  const key = `${adminId}:${segment}:${normalizedSubject.toLowerCase()}`;
+  recentBulkSubmissions.set(key, now);
+
+  for (const [k, timestamp] of recentBulkSubmissions.entries()) {
+    if (now - timestamp > BULK_DUPLICATE_WINDOW_MS * 2) {
+      recentBulkSubmissions.delete(k);
+    }
+  }
+}
+
+export function _resetBulkEmailLocksForTesting(): void {
+  activeBulkSendAdmins.clear();
+  recentBulkSubmissions.clear();
+  adminAccessCache.clear();
+}
+
 router.post("/communications/test-email", async (req: Request, res: Response) => {
   try {
     const body = parseOrThrow(testEmailSchema, req.body ?? {});
@@ -1789,6 +1852,190 @@ router.post("/communications/send-selected-sellers-email", async (req: Request, 
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to send email to selected sellers";
     return res.status(message.includes("Invalid") ? 400 : 500).json({ success: false, message });
+  }
+});
+
+router.get("/communications/recipient-count", async (req: Request, res: Response) => {
+  try {
+    const query = parseOrThrow(bulkRecipientCountQuerySchema, req.query ?? {});
+    const segment = query.segment;
+
+    const whereClause = getBulkRecipientWhereClause(segment);
+
+    const [
+      eligibleCount,
+      totalUsers,
+      bannedCount,
+      unverifiedEmailCount,
+      optedOutCount,
+      noActiveAdsCount,
+    ] = await Promise.all([
+      prisma.user.count({ where: whereClause }),
+      prisma.user.count(),
+      prisma.user.count({ where: { bannedAt: { not: null } } }),
+      prisma.user.count({ where: { emailVerifiedAt: null } }),
+      prisma.user.count({ where: { notificationSettings: { emailNotifications: false } } }),
+      segment === "ACTIVE_SELLERS"
+        ? prisma.user.count({
+            where: {
+              role: UserRole.USER,
+              status: UserStatus.ACTIVE,
+              bannedAt: null,
+              emailVerifiedAt: { not: null },
+              ads: { none: { status: AdStatus.ACTIVE } },
+            },
+          })
+        : Promise.resolve(0),
+    ]);
+
+    return res.json({
+      success: true,
+      data: {
+        segment,
+        eligibleCount,
+        timestamp: new Date().toISOString(),
+        breakdown: {
+          totalUsers,
+          banned: bannedCount,
+          unverifiedEmail: unverifiedEmailCount,
+          optedOut: optedOutCount,
+          ...(segment === "ACTIVE_SELLERS" ? { noActiveAds: noActiveAdsCount } : {}),
+        },
+      },
+    });
+  } catch (error) {
+    const status = (error as any)?.status || (error instanceof z.ZodError || (error instanceof Error && (error.message.includes("Invalid") || error.message.includes("required")))) ? 400 : 500;
+    const message = error instanceof Error ? error.message : "Failed to calculate recipient count";
+    return res.status(status).json({ success: false, message });
+  }
+});
+
+router.post("/communications/send-bulk-email", async (req: Request, res: Response) => {
+  const adminId = req.auth!.userId;
+  let mutexAcquired = false;
+  let createdCampaignId: string | null = null;
+
+  try {
+    const body = parseOrThrow(sendBulkEmailSchema, req.body ?? {});
+
+    // 1. Sanitize subject (strips \r and \n to prevent SMTP header injection)
+    const safeSubject = body.subject.replace(/[\r\n]+/g, " ").trim();
+
+    // 2. Escape HTML in message content (< and >)
+    const safeMessage = body.message.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+    // 3. Duplicate check within 60 seconds (same admin, segment, subject)
+    if (isRecentDuplicateCampaign(adminId, body.segment, safeSubject)) {
+      return res.status(409).json({
+        success: false,
+        message: "An identical bulk campaign was recently submitted. Please wait 60 seconds before resending.",
+      });
+    }
+
+    // 4. In-flight mutex lock for this admin
+    if (activeBulkSendAdmins.has(adminId)) {
+      return res.status(409).json({
+        success: false,
+        message: "A bulk email dispatch is already in progress for this administrator. Please wait for it to complete.",
+      });
+    }
+
+    activeBulkSendAdmins.add(adminId);
+    mutexAcquired = true;
+
+    // 5. Query eligible recipients
+    const eligibleRecipients = await prisma.user.findMany({
+      where: getBulkRecipientWhereClause(body.segment),
+      select: bulkRecipientSelect,
+    });
+
+    if (eligibleRecipients.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No eligible recipients found for this segment.",
+      });
+    }
+
+    // 6. Create EmailCampaign record in DRAFT status
+    const messageSnippet = safeMessage.length > 100 ? safeMessage.substring(0, 97) + "..." : safeMessage;
+    const campaign = await prisma.emailCampaign.create({
+      data: {
+        type: getCampaignTypeForSegment(body.segment),
+        status: "DRAFT",
+        adminId,
+        subject: safeSubject,
+        messageSnippet,
+        requestedCount: eligibleRecipients.length,
+        eligibleCount: eligibleRecipients.length,
+        sentCount: 0,
+        failedCount: 0,
+        skippedCount: 0,
+      },
+    });
+    createdCampaignId = campaign.id;
+
+    // 7. Dispatch batch
+    const batchResult = await executeBulkEmailBatch(
+      {
+        campaignId: campaign.id,
+        recipients: eligibleRecipients.map((u) => ({
+          id: u.id,
+          email: u.email!,
+          fullName: u.fullName,
+        })),
+        subject: safeSubject,
+        messageText: safeMessage,
+      },
+      { resendClient: resend }
+    );
+
+    // 8. Record audit log
+    await auditAdminAction(req, "ADMIN_BULK_EMAIL_SENT", "EMAIL_CAMPAIGN", campaign.id, {
+      campaignId: campaign.id,
+      segment: body.segment,
+      eligibleCount: eligibleRecipients.length,
+      sentCount: batchResult.sentCount,
+      failedCount: batchResult.failedCount,
+      status: batchResult.status,
+    });
+
+    // 9. Record submission timestamp for duplicate prevention
+    recordBulkCampaignSubmission(adminId, body.segment, safeSubject);
+
+    return res.json({
+      success: true,
+      data: {
+        campaignId: campaign.id,
+        segment: body.segment,
+        requestedCount: eligibleRecipients.length,
+        eligibleCount: eligibleRecipients.length,
+        sentCount: batchResult.sentCount,
+        failedCount: batchResult.failedCount,
+        status: batchResult.status,
+      },
+      message: `Bulk email campaign dispatched (${batchResult.sentCount} sent, ${batchResult.failedCount} failed).`,
+    });
+  } catch (error) {
+    if (createdCampaignId) {
+      try {
+        await prisma.emailCampaign.update({
+          where: { id: createdCampaignId },
+          data: { status: "FAILED" },
+        });
+      } catch {
+        // Ignore fallback update failure to preserve root error
+      }
+    }
+    const status = (error as any)?.status || (error instanceof z.ZodError || (error instanceof Error && (error.message.includes("Invalid") || error.message.includes("required")))) ? 400 : 500;
+    const message = error instanceof Error ? error.message : "Failed to send bulk email";
+    return res.status(status).json({
+      success: false,
+      message,
+    });
+  } finally {
+    if (mutexAcquired) {
+      activeBulkSendAdmins.delete(adminId);
+    }
   }
 });
 
