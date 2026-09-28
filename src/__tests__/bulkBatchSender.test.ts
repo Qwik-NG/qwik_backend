@@ -380,6 +380,7 @@ describe("bulkEmailBatch Resend batch integration", () => {
       // HTML escaped in email html body
       expect(capturedPayload[0].html).toContain("&lt;script&gt;alert('xss')&lt;/script&gt; Hello");
       expect(capturedPayload[0].html).not.toContain("<script>");
+      expect(capturedPayload[0].html).not.toContain("Admin Communication");
     });
   });
 });

@@ -1545,7 +1545,7 @@ router.post("/communications/test-email", async (req: Request, res: Response) =>
         <div style="margin-top:24px;padding-top:16px;border-top:1px solid #f0f0f2">
           <p style="margin:0;font-size:12px;color:#9a99a6">⚠️ This is a <strong>test admin communication</strong> sent only to <strong>${admin.email}</strong>. No users received this email.</p>
         </div>`,
-        { preheader: `[Test] ${safeSubject}`, subtitle: "Admin Panel — Communications" }
+        { preheader: `[Test] ${safeSubject}` }
       ),
       text: `[TEST ADMIN COMMUNICATION]\n\nSubject: ${safeSubject}\n\n${body.message}\n\n---\nThis is a test admin communication sent only to ${admin.email}. No users received this email.`,
     });
@@ -1618,7 +1618,7 @@ router.post("/communications/send-user-email", async (req: Request, res: Respons
         <div style="margin-top:24px;padding-top:16px;border-top:1px solid #f0f0f2">
           <p style="margin:0;font-size:12px;color:#9a99a6">This email was sent by Qwik.ng admin communications.</p>
         </div>`,
-        { preheader: safeSubject, subtitle: "Admin Communication" }
+        { preheader: safeSubject }
       ),
       text: `${body.subject}\n\n${body.message}`,
     });
@@ -1766,7 +1766,7 @@ router.post("/communications/send-selected-sellers-email", async (req: Request, 
           <div style="margin-top:24px;padding-top:16px;border-top:1px solid #f0f0f2">
             <p style="margin:0;font-size:12px;color:#9a99a6">This email was sent by Qwik.ng admin communications.</p>
           </div>`,
-          { preheader: safeSubject, subtitle: "Admin Communication" }
+          { preheader: safeSubject }
         ),
         text: `${body.subject}\n\n${body.message}`,
       });

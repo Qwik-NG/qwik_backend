@@ -183,7 +183,7 @@ export async function executeBulkEmailBatch(
         </div>`,
         {
           preheader: safeSubject,
-          subtitle: payload.subtitle || "Admin Communication",
+          subtitle: payload.subtitle,
         }
       );
 
