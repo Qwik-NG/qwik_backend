@@ -296,26 +296,32 @@ router.get("/analytics", async (_req: Request, res: Response) => {
       prisma.notification.count({ where: { read: false } }),
       prisma.paymentTransaction.groupBy({
         by: ["status"],
+        where: {},
         _count: { _all: true },
       }),
       prisma.paymentTransaction.groupBy({
         by: ["purpose"],
+        where: {},
         _count: { _all: true },
       }),
       prisma.ad.groupBy({
         by: ["categoryId"],
+        where: {},
         _count: { _all: true },
       }),
       prisma.ad.groupBy({
         by: ["locationState"],
+        where: {},
         _count: { _all: true },
       }),
       prisma.user.groupBy({
         by: ["locationState"],
+        where: {},
         _count: { _all: true },
       }),
       prisma.notification.groupBy({
         by: ["type"],
+        where: {},
         _count: { _all: true },
       }),
     ]);
